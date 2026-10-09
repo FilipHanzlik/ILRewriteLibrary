@@ -1,0 +1,672 @@
+IL REWRITE THESIS - ILLINK WORKLOADS, PROFILING, AND ARCHITECTURE
+Updated: 2026-09-17
+=============================================================
+
+Purpose
+-------
+Continuation after ILRewriteThesis-Handoff-SRM.txt. This records both discoveries
+and HOW TO REPRODUCE/INVESTIGATE them. Read alongside the earlier handoffs, not as
+a replacement for their DLL/SRM explanations.
+
+Reading order:
+1. ILRewriteThesis-Handoff.txt
+2. ILRewriteThesis-Handoff-Supplement.txt
+3. ILRewriteThesis-Handoff-Cecil-to-SRM.txt
+4. ILRewriteThesis-Handoff-SRM.txt
+5. This file.
+
+Companion reference: SRM-Cheatsheet.md.
+Blazor setup reference: Scratchpad\BlazorTrimDemo\Profiling-Guide.txt.
+That guide describes initial setup; subsequent USER-SUPPLIED trace findings are
+recorded here. Its initial statement that no profiling had occurred is historical.
+
+IMPORTANT: distinguish explained, demonstrated, and inferred. The user is learning
+PerfView and has needed explicit window/tab navigation, not just conceptual advice.
+Their trace tables were pasted into chat. The assistant has NOT opened their raw
+trace files or independently confirmed their current filter configuration.
+
+1. Goal, scope, and uncertainty
+-------------------------------
+Long-term goal: an efficient SRM-based IL/metadata rewriting foundation with an
+extensible architecture, initially useful for a bachelor thesis and ILLink.
+Correctness is necessary but not sufficient; real speed improvement matters.
+The reported large-DLL ceiling is about 20-30 MB, not the full workload size.
+
+Architecture discussion used "port ILLink" as the integration goal. Later the user
+clarified that they do NOT want to change ILLink during investigation: focus on
+Cecil while unchanged ILLink drives representative workloads.
+
+Keep these separate:
+- Near-term experiment: unchanged ILLink + original versus instrumented/modified
+  compatible Cecil.
+- Long-term library integration: replacing Cecil's object model may require an
+  ILLink port unless a compatible facade is supplied. This scope is not resolved.
+
+No new rewriting library, optimization, instrumented Cecil fork, or statistically
+controlled benchmark has been implemented. Source research and two learning
+workloads provide hypotheses, not a demonstrated end-to-end speedup.
+
+2. Tool-name correction
+-----------------------
+The original handoff said ILStrip. The user's concrete captured build uses ILLink:
+  Microsoft.NET.ILLink.Tasks 10.0.12.
+
+ILLink is the standard SDK-integrated managed trimmer, living in:
+  https://github.com/dotnet/runtime/tree/main/src/tools/illink
+Old dotnet/linker is archived and points to runtime.
+
+BrokenEvent.ILStrip is a separate third-party project:
+  https://github.com/BrokenEvent/ILStrip
+Its README describes class-level reachability/removal after ILRepack, with
+WPF/BAML and resource support. If a class remains, all its members remain.
+Inspected NuGet package: 1.1.4, published May 2020, net45, Cecil 0.9.6.4.
+It is not Microsoft's standard trimmer and is NOT merely a predefined-removal
+executor; it performs usage analysis. Do not revive the earlier ambiguity.
+
+3. ILLink concepts and source entry points
+------------------------------------------
+ILLink statically analyzes IL/metadata; it does not execute application methods
+to discover reachability. Conceptually:
+  inputs + roots/configuration -> marking/dependency closure -> transformations
+  and sweep -> output.
+Real pipeline has additional steps and ordering dependencies.
+
+Configured substitutions can permanently change output behavior (e.g., a disabled
+feature method returns false). Analysis must observe that effective result.
+It is not a temporary runtime invocation followed by reverting the substitution.
+Replacement dependencies must be known before sweeping.
+
+Cecil participates throughout reading, analysis representations, mutation, and
+output, not merely the final serialization call.
+
+Useful files under src\tools\illink\src\linker:
+- Linker.Steps\OutputStep.cs: assembly.Write and copy/link actions.
+- Linker.Steps\SweepStep.cs: removal and reference repair.
+- Linker.Steps\MarkStep.cs: large, complex reachability implementation.
+- Linker\Driver.cs: command parsing and pipeline.
+- Linker\TypeMapInfo.cs: hierarchy/default-interface analysis; observed hotspot.
+- Linker\LinkerEventSource.cs: Microsoft-DotNET-Linker events.
+
+Current-source investigation found Microsoft.DotNet.Cecil as a package dependency,
+not the public Mono.Cecil package name:
+  src\tools\illink\src\linker\Mono.Linker.csproj
+Before replacing Cecil, identify the exact assembly/package/source used by installed
+ILLink 10.0.12. Do not assume upstream Cecil master is equivalent.
+
+Source research snapshots:
+- runtime 75b3c8672a2828889e823c0d00d512403f0856ee
+- Cecil 882ca5eedda1e62eb41bd5869aeb15d8f1538e51
+- v10.0.0 TypeMapInfo was later consulted as nearby-version evidence.
+NONE has been established as the exact source revision for the installed 10.0.12.
+
+4. Clone/setup issues
+---------------------
+The user started cloning dotnet/runtime and hit Windows "Filename too long" in
+deep NativeAOT paths. Recommended a short checkout outside OneDrive:
+  New-Item -ItemType Directory -Path C:\src -Force
+  Set-Location C:\src
+  git -c core.longpaths=true clone --filter=blob:none https://github.com/dotnet/runtime.git
+  Set-Location .\runtime
+  git config core.longpaths true
+  git switch -c illink-profiling
+
+User said download was in progress and planned to analyze with IDE Copilot.
+Completed clone/current branch/location have NOT been inspected.
+Do not delete/reset any existing checkout.
+
+5. First workload: TrimDemo console app
+--------------------------------------
+USER-created project:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite\docs\learning-exploring\TrimDemo
+
+Referenced existing sample:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite\docs\learning-exploring\dll-inspection
+
+Suggested Program.cs:
+  using System;
+  using DllExplorerSample;
+  var calculator = new Calculator();
+  Console.WriteLine(calculator.Add(2, 3));
+
+The project reference points to the sample .csproj; no .sln is required.
+PublishTrimmed=true belongs in the console project.
+
+From TrimDemo:
+  dotnet publish -c Release -r win-x64 --self-contained true -o .\out\trimmed -bl:publish.binlog
+
+The user published and supplied the command extracted from the binlog.
+Its significant arguments:
+  -a "obj\Release\net10.0\win-x64\TrimDemo.dll" EntryPoint
+  --singlewarn
+  --trim-mode link
+  --action link
+  -reference "<sample DLL>"
+  -reference "<many Microsoft.NETCore.App.Runtime.win-x64 10.0.12 DLLs>"
+  -reference "obj\Release\net10.0\win-x64\TrimDemo.dll"
+  -out "obj\Release\net10.0\win-x64\linked"
+  warning switches, feature switches, --keep-metadata "all", -b
+
+The command showed actual tool:
+C:\Users\t-fhanzlik\.nuget\packages\microsoft.net.illink.tasks\10.0.12\tools\net\illink.dll
+
+A reference list makes assemblies available; it does not prove every listed method
+is analyzed or preserved. System.Reflection.Metadata.dll in the input list is not
+evidence of ILLink's internal implementation dependencies.
+
+Console binlog task timing from USER screenshot:
+  ILLink: 4.998 seconds, 1 task invocation
+  Csc: 2.245 seconds, 2 task invocations
+  ComputeManagedAssemblies: 1.606 seconds
+These are build-task timings, not exclusive CPU times or Cecil call counts.
+Tasks can overlap; do not sum them to infer total publish time.
+
+Assistant access to the external project folder was twice denied:
+  Access denied - symlink target outside allowed folders.
+The user switched to manual setup. Current access has not been re-established.
+Do not bypass that boundary or claim to have inspected their project/response file.
+
+6. Creating/replaying a response file
+-------------------------------------
+A .rsp is plain text holding ILLink ARGUMENTS ONLY, not the dotnet executable or
+illink.dll path. @linker.rsp tells ILLink to load those arguments.
+
+Manual capture procedure taught:
+1. Open publish.binlog in local MSBuild Structured Log Viewer.
+2. Navigate to the actual ILLink task under _RunILLink, not merely the expensive-
+   tasks summary.
+3. Copy its complete command.
+4. Remove the host/tool prefix; retain every reference, feature, warning, metadata
+   and symbol option.
+5. Save as linker.rsp beside the project, not linker.rsp.txt.
+6. Redirect -out to a dedicated replay directory (console suggestion:
+   out\illink-replay).
+7. Run from the original project working directory.
+
+PowerShell command, from the relevant project's directory:
+  & "C:\Program Files\dotnet\dotnet.exe" "C:\Users\t-fhanzlik\.nuget\packages\microsoft.net.illink.tasks\10.0.12\tools\net\illink.dll" '@linker.rsp'
+
+Check $LASTEXITCODE. A full rsp path alone does not fix relative INPUT paths:
+working directory still matters.
+Do not clean obj/bin/NuGet inputs before replay.
+ILLink output is not a complete runnable publish directory.
+
+Potential helper investigated:
+  https://github.com/vitek-karas/illinkrepro
+  illinkrepro create .\publish.binlog --project TrimDemo -o .\trimdemo-repro
+This command assumes the tool has been built/made available; it was NOT installed.
+It extracts a response file and copies recognized inputs. Source accepts successful
+invocations too despite README emphasis on failed cases.
+Caveats: net7 target, older StructuredLogger; newer binlog compatibility untested;
+does not bundle ILLink/runtime; does not capture every auxiliary input, such as
+adjacent PDBs for individually copied DLLs. Validate replay equivalence.
+
+7. Second workload: assistant-created BlazorTrimDemo
+---------------------------------------------------
+ACTUAL workspace project:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout\Scratchpad\BlazorTrimDemo
+
+Observed SDK: 10.0.401; installed blazorwasm template available.
+No global dotnet tools were installed.
+
+Scaffolding command from workspace:
+  dotnet new blazorwasm -n BlazorTrimDemo -o .\Scratchpad\BlazorTrimDemo -f net10.0 --no-restore
+
+Stock template with these explicit project properties added:
+  <PublishTrimmed>true</PublishTrimmed>
+  <RunAOTCompilation>false</RunAOTCompilation>
+  <WasmBuildNative>false</WasmBuildNative>
+  <WasmNativeWorkload>false</WasmNativeWorkload>
+WebAssembly/DevServer package versions: 10.0.12.
+
+From project directory:
+  dotnet publish .\BlazorTrimDemo.csproj -c Release -o .\artifacts\publish -bl:publish.binlog --nologo -v:minimal
+
+Publish succeeded. Its roughly 56-second console-reported build duration included
+restore/build/publish, NOT a standalone ILLink benchmark.
+Target: browser-wasm. Profiling host: Windows x64.
+
+Exact command extraction was done with a small helper reading the binlog using
+SDK Microsoft.Build assemblies, collecting TaskCommandLineEventArgs for ILLink,
+requiring exactly one invocation, separating the quoted illink.dll path, and
+changing only -out. Helper source:
+C:\Users\t-fhanzlik\.copilot\session-state\39783204-3e6e-48ee-9370-922050bae4f3\files\BinlogLinkerCapture
+
+Actual generated files:
+- BlazorTrimDemo.csproj and stock app sources
+- publish.binlog
+- linker-original-command.txt
+- linker-tool-path.txt
+- linker-original-output.txt
+- linker.rsp (240 lines at extraction)
+- Profiling-Guide.txt
+
+Output locations:
+- obj\Release\net10.0\linked : SDK linker output
+- artifacts\illink-replay : standalone replay output
+- artifacts\publish\wwwroot : published browser application
+- bin\Release\net10.0\BlazorTrimDemo.dll : original app assembly
+
+IMPORTANT configuration difference:
+  Blazor:  --trim-mode link --action copy
+  Console: --trim-mode link --action link
+The Blazor SDK-selected configuration was intentionally preserved, not forced to
+match the console. These are different scenarios, not a clean size-only experiment.
+
+Assistant ran the standalone Blazor replay successfully. Both SDK and replay
+directories contained 35 DLLs; all corresponding SHA256 hashes matched.
+This verifies reproduction of managed outputs, NOT browser functionality or a
+general semantic guarantee. No browser execution test was performed.
+
+An optional Run-ILLink.ps1 was blocked by PowerShell execution policy and removed.
+No execution policy was changed or bypassed. Direct command and PerfView work.
+
+The response file is NOT a portable repro package: it references current build
+intermediates and absolute NuGet paths. Preserve inputs, PDBs, descriptors, tool,
+and runtime; recapture after moving the project or changing configuration.
+Workspace is OneDrive-backed. This can affect measurement conditions. Prefer a
+non-synced location for controlled experiments, but moving requires recapture.
+
+8. PerfView capture: exact reproduction steps
+--------------------------------------------
+PerfView runs on Windows/.NET Framework, but can analyze modern .NET ILLink via
+ETW/runtime data. Use a current PerfView release. Framework compatibility is not
+the same as the target application's runtime version.
+
+Use Collect -> Run (may require elevation).
+
+Command field (ONE line, NO PowerShell ampersand/backticks):
+"C:\Program Files\dotnet\dotnet.exe" "C:\Users\t-fhanzlik\.nuget\packages\microsoft.net.illink.tasks\10.0.12\tools\net\illink.dll" @linker.rsp
+
+Current Dir for Blazor:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout\Scratchpad\BlazorTrimDemo
+
+Suggested Data File for Blazor:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout\Scratchpad\BlazorTrimDemo\blazor-illink-baseline.etl
+
+Console Current Dir:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite\docs\learning-exploring\TrimDemo
+Suggested console Data File: illink-baseline.etl under that directory.
+Trace names/actual presence were not independently inspected.
+
+Recommended settings:
+- Kernel Base: on.
+- CPU Samples: on.
+- .NET: on (normal runtime events, including GC/coarse allocation sampling).
+- Merge/Zip: on.
+- Additional Providers: *Microsoft-DotNET-Linker:0x2:4
+  EventSource name, Step keyword 0x2, informational level 4.
+- Thread Time: off initially.
+- GC Only and GC Collect Only: off for combined CPU/runtime capture.
+- Leave .NET Calls, .NET Alloc, .NET SampAlloc, stress/inlining/network capture
+  extras off initially. They are not required for the observed coarse allocations.
+- Default circular buffer for the short initial run; inspect lost-event warnings.
+
+Use Run Command, wait for process exit AND trace processing.
+Confirm ILLink success in the collection log.
+Symbol prompt: Microsoft symbol server was recommended. It downloads matching
+symbols, not the whole trace upload; lookup requests expose symbol identifiers.
+Keep trace/binlog private: system-wide collection can include unrelated processes,
+and ILLink events can include paths/arguments.
+
+9. PerfView navigation and interpretation
+----------------------------------------
+The CPU/stack table opens in a SEPARATE window. To return to the main file tree,
+minimize that window or select the other PerfView taskbar preview.
+The .etl/.etl.zip is the recording created from Data File, not a special input
+called "trace" that needs creating again.
+
+CPU:
+1. Expand recording in main tree.
+2. Double-click CPU Stacks.
+3. Select dotnet process by COMMAND LINE containing illink.dll.
+4. Use By Name, CallTree, Callers/Callees.
+
+Allocation:
+1. Main tree -> same recording -> Memory.
+2. User's exact available option:
+   GC Heap Alloc Ignore Free (Coarse Sampling) Stacks
+3. Select same ILLink process.
+4. By Name shows allocation types/synthetic categories.
+
+Other actual Memory entries in user screenshot:
+- GC Heap Net Mem (Coarse Sampling) Stacks
+- Gen 2 Object Deaths (Coarse Sampling) Stacks
+- Server GC Stacks
+- GCStats
+- GC Heap Analyzer
+
+CPU Exc: own attributed CPU samples; Inc: includes descendants.
+Allocation Exc/Inc: weighted/estimated byte volume; not CPU time.
+Exc Ct / Inc Ct in this allocation view: recorded sample contributions, NOT exact
+object counts. "Sampled only 100K bytes" is coarse allocation sampling.
+Ignore Free counts allocations even after objects are collected.
+Do not equate cumulative allocation, live heap, retained memory, or working set.
+Do not sum overlapping inclusive metrics. Runtime GC may run on separate threads.
+CPU sample counts are not API invocation counts.
+
+Symbols/grouping:
+- "module illink <<illink!Driver.Main>>" is GROUPED content, not literal Main cost.
+- Each analysis window has its own GroupPats/FoldPats settings.
+- Clear grouping/folding and set Fold % to 0 when investigating individual methods.
+- Use Update. Re-select an item after regrouping; old grouped selections may vanish.
+- Native lookup split coreclr!? into named GC/runtime entries.
+- Resolving ?!? did nothing. Cause unestablished: mapping/unwind info may be absent.
+  Leave unattributed samples visible; do not assign them to Cecil/GC.
+- Do not keep asking the user to change filters blindly; request full window
+  screenshot if only ROOT appears.
+
+10. User-supplied console results
+--------------------------------
+These are copied summaries from user tables, not assistant-owned trace analysis.
+
+CPU, after resolving symbols and ungrouping:
+  FindAndAddDefaultInterfaceImplementations:
+    Exc 6.6%, metric 374; Inc 15.0%, metric 842.
+  JIT_CountProfile32: Exc 4.4%, metric 249.
+  Monitor_TryEnter_FastPath: Exc 2.6%, metric 146; Inc 2.8%, 160.
+  Monitor_Exit_FastPath: Exc 2.5%, metric 143.
+  Numerous SVR::gc_heap background mark/sweep/relocation entries.
+  ModuleDefinition.Read: Exc 0.2%, 13; Inc 8.8%, 493.
+  Unresolved ?!?: Exc 6.0%, 337.
+
+Monitor callers:
+  124 of 160 inclusive sampled metric reached through
+  FindAndAddDefaultInterfaceImplementations (about 78%).
+  Explicitly displayed ModuleDefinition.Read contribution: 11, plus other paths.
+This is monitor-acquisition CPU, NOT evidence of contention/waiting.
+
+Nearby v10.0.0 TypeMapInfo source has no explicit lock in that method. It repeatedly
+queries Cecil Interfaces, Methods, HasOverrides, Overrides. Inlining can hide
+Cecil helper frames beneath an ILLink caller. Actual lock ownership and
+"no overrides" caching behavior have NOT been established for 10.0.12.
+Do not remove locks or blame ILLink purely from the displayed caller name.
+
+Allocation: total inferred from rounded percentages approximately 330 MB, not an
+exact recorded total. Top exclusive estimates:
+  LargeObject                         49,999,640
+  Mono.Cecil.Cil.Instruction           44,938,176
+  Mono.Cecil.GenericInstanceType        20,186,328
+  Mono.Cecil.ParameterDefinition       13,404,784
+  Mono.Cecil.Cil.Instruction[]          10,626,592
+  Mono.Cecil.SignatureReader            10,301,944
+  Mono.Cecil.TypeReference[]             9,564,608
+  System.Byte[]                         8,924,960
+  Mono.Cecil.MethodDefinition            7,857,424
+  System.String                         7,239,824
+
+Instruction objects + arrays: about 55.6 MB, roughly 16.7% of that view.
+LargeObject is a synthetic category, not an identified class or owner.
+
+11. User-supplied Blazor results
+--------------------------------
+CPU:
+  FindAndAddDefaultInterfaceImplementations:
+    Exc 5.3%, 348; Inc 12.6%, 833.
+  JIT_CountProfile32: Exc 4.2%, 279.
+  Monitor_TryEnter_FastPath: Exc 2.3%, 153; Inc 2.6%, 170.
+  Monitor_Exit_FastPath: Exc 2.2%, 144.
+  Many SVR::gc_heap entries; plan_phase Inc 9.7%, 641.
+  Unresolved ?!?: Exc 6.8%, 452.
+
+PGO caveat: JIT_CountProfile32/JIT_ClassProfile32 are runtime profile-collection
+helpers associated with dynamic PGO, not simply compiler code-generation time and
+not evidence that PerfView's expensive .NET Calls option was enabled.
+Keep normal runtime configuration for baseline. Do not disable PGO prematurely.
+
+Allocation header (verbatim values):
+  Totals Metric: 492,617,900.0
+  Count: 4,210.0
+  First: 647.370 ms
+  Last: 5,637.605 ms
+  Last-First: 4,990.235 ms
+  Metric/Interval: 98,716.37 bytes/ms
+  TimeBucket: 179.1
+  Sampled only 100K bytes
+  MaxMetric: 492.635M at 5,732.171ms
+
+Interpretation: approximately 492.6 MB estimated cumulative managed allocation.
+Sample interval approximately 4.99s is NOT necessarily full ILLink elapsed time.
+Average over that sample interval approximately 98.7 MB/s.
+MaxMetric in Ignore Free is NOT peak live heap. TimeBucket is presentation detail.
+
+Top exclusive allocation bytes:
+  Mono.Cecil.Cil.Instruction           63,552,288 (12.9%, 598 samples)
+  LargeObject                         56,084,792 (11.4%)
+  System.String                       27,755,584 (5.6%)
+  Mono.Cecil.GenericInstanceType       23,913,616 (4.9%)
+  System.Byte[]                       19,076,192 (3.9%)
+  Mono.Cecil.ParameterDefinition       18,735,528 (3.8%)
+  Mono.Cecil.Cil.Instruction[]         16,480,896 (3.3%)
+  Mono.Cecil.SignatureReader           15,844,368 (3.2%)
+  System.Int32[]                      12,294,016 (2.5%)
+  Mono.Cecil.TypeReference[]           11,921,832 (2.4%)
+  Mono.Cecil.MethodDefinition           9,892,384 (2.0%)
+  Mono.Cecil.MethodReturnType           9,345,888 (1.9%)
+  Collection<TypeReference>             9,244,752 (1.9%)
+  Mono.Cecil.SignatureWriter            6,156,024 (1.2%)
+  Mono.Cecil.MethodReference            6,070,176 (1.2%)
+  ParameterDefinitionCollection         5,949,560 (1.2%)
+  MethodDebugInformation                5,205,640 (1.1%)
+  Mono.Cecil.Cil.MethodBody              4,573,856 (0.9%)
+  ILLink.Shared.TrimAnalysis.MethodReturnValue 3,295,392 (0.7%)
+  Mono.Linker.OverrideInformation        2,872,992 (0.6%)
+
+Instructions + instruction arrays: 80,033,184 bytes (~80 MB, 16.2% of total).
+Compared with console: greater absolute allocation, similar instruction share.
+Strings increased from ~7.2 MB to ~27.8 MB; allocation origin not yet inspected.
+Total roughly 50% above console estimate, NOT 50% more live memory/time.
+
+Instruction-specific caller view:
+  Type Instruction:                         63,552,288
+    coreclr RhpNewObject:                   63,552,288
+      grouped Cecil MethodDefinition.get_Body: 62,595,536
+      Instruction.Create:                     531,632
+      Instruction.GetPrototype:               212,944
+      ILProcessor.Create:                     106,088
+      another ILProcessor.Create:             106,088
+
+~98.5% of sampled Instruction allocation followed the grouped body-getter path.
+This supports materialization of existing IL as a major source, not a proof that
+those bodies can be eliminated or scanned without equivalent analysis structures.
+RhpNewObject is allocator machinery; do not add its metric again.
+
+User then selected get_Body directly and obtained:
+  140,840,544 bytes, 28.6%, 1,322 sample contributions
+  -> grouped illink Driver.Main -> runtime/host startup chain.
+That changed selection includes ALL allocation under the grouped body getter,
+not just Instruction objects. It cannot be interpreted as a sudden increase in
+instruction allocation. Grouping hid the actual ILLink consumers.
+
+12. Last unresolved task: estimated total Cecil-associated allocation
+--------------------------------------------------------------------
+The user asked for "total allocated by Cecil."
+Distinguish:
+- Objects with Cecil type names: misses System.String, arrays, framework collections.
+- Allocation stacks traversing Cecil: includes non-Cecil types, but can miss
+  inlined frames or ILLink directly constructing Cecil objects.
+Neither is exact semantic memory ownership.
+
+IMPORTANT correction to previous assistant guidance:
+Replacing IncPats directly with a Cecil pattern can REMOVE the process restriction.
+The user correctly pointed out current IncPats:
+  Process% dotnet (3080)
+
+The last proposed procedure (NOT yet confirmed completed):
+1. Keep that process filter.
+2. In CallTree select Process64 dotnet (3080) and its inclusive metric.
+3. Right-click -> Drill Into.
+   This should create a separate view backed only by that process's selected samples.
+4. In NEW view clear GroupPats/FoldPats.
+5. Set IncPats to:
+   @^mono\.cecil!
+6. Update and inspect Totals Metric.
+
+The @ prefix selects full regex syntax; PerfView otherwise uses simplified patterns.
+The leading ^ matches ungrouped frame names starting mono.cecil!.
+Do not just append with semicolon: the consulted user guide describes alternatives,
+not an AND constraint across process and Cecil.
+Process ID 3080 belongs to that captured Blazor run, not future executions.
+
+This is a proposed stack-associated allocation estimate, not exact retained heap.
+Actual filtered total has NOT been supplied. User previously got only ROOT after
+changing grouping/selection; diagnose with full screenshot rather than assuming
+the recording was lost.
+
+13. What these results support and do NOT support
+------------------------------------------------
+Supported provisional findings:
+- GC/runtime activity, interface analysis, and monitor overhead appear in both runs.
+- Cecil instruction and generic/signature representations account for substantial
+  sampled allocation volume.
+- Most observed Instruction allocation follows a body-getter/materialization path.
+- Blazor template adds allocation compared with console, especially strings.
+
+Not established:
+- Exact Cecil-only allocated bytes.
+- Which ILLink operation triggers most body materialization (ungrouped callers
+  still needed).
+- Source of string/LargeObject allocation.
+- Exact GC pause totals, retained heap, peak memory, or causal GC attribution.
+- Exact API call counts/arguments or object counts from sampled events.
+- Actual lock contention or the exact lock/caching mechanism in deployed Cecil.
+- Reproducibility across repeated runs, production/mobile representativeness.
+- End-to-end speedup achievable by SRM or any specific optimization.
+
+Methods and GC are not independent cost categories: methods allocate, object
+lifetimes affect collections, and GC often runs elsewhere. A lower allocation
+percentage is not the same fraction of elapsed-time savings.
+
+14. Architecture research: proposed, not implemented
+----------------------------------------------------
+User proposals:
+1. Transactional edits applied at end; concern intermediate-state calculations.
+2. Lazy Cecil-like API, thread-safe edits, symbolic tokens/late offsets.
+
+Source-backed recommendation:
+  Immutable input + stable IDs + compact effective edit state + method-local
+  editors + planned emission.
+
+Separate semantic publication from physical file emission.
+- Original view: input metadata.
+- Current view: published edits over input.
+- Editor-local view: current state plus unpublished edits.
+- Commit publishes semantic state, not a DLL.
+- Initially support canceling unpublished edits, not full rollback of side-effecting
+  analysis/worklists/diagnostics.
+
+ILLink evidence:
+- GetMethodIL must expose optimized bodies before marking inspects dependencies.
+- Substitution precedence affects constant propagation.
+- Marking reaches a fixed point; deferred/new helper dependencies must be included.
+- Sweep requires deletion-aware resolution and effective member enumeration.
+- Annotations/cache keys require stable entity identity.
+- Constructed references carry generic context beyond definition IDs.
+- Custom-step interfaces expose concrete Cecil types; compatibility is not automatic.
+
+Explicit editing scopes mean controlled ownership/visibility, not merely adding
+locks around setters. Start sequential, publish as needed inside analysis, then
+parallelize only genuinely independent work with defined inputs.
+
+Cecil already defers offsets and uses symbolic instruction/member references.
+Both Cecil and SRM final emitters store compact row representations.
+Neither novelty claim alone supports speed.
+
+Emitter invariants:
+- Separate input handles, stable entity IDs, output tokens and physical locations.
+- Group methods/fields/parameters by owner for contiguous metadata ranges.
+- Account for sorted-table ordering before encoding referring rows.
+- Remap fixed-width IL tokens, locals, catch types and user strings.
+- Re-encode compressed signature references when sizes change.
+- Handle branch widening, EH, max stack, PDBs, resources and signing explicitly.
+- Collect reference/heap requests before parallel body encoding with private buffers.
+- Shared SRM builders are mutable, not safely concurrently appendable.
+- Stable identity does not resolve signature-change versus caller-edit conflicts.
+- Bound bytes in flight; cached decoded analysis data may still be necessary.
+
+Reachability needs a logical dependency graph, not necessarily a full editable
+object graph. Queues/sets can use stable IDs and discover edges on demand, but
+ILLink genuinely needs hierarchy/generic/reflection analysis structures. Do not
+claim all analysis objects can disappear or continually re-decode everything.
+
+Useful pinned examples:
+https://github.com/dotnet/runtime/blob/75b3c8672a2828889e823c0d00d512403f0856ee/src/tools/illink/src/linker/Linker/LinkContext.cs#L1051-L1072
+https://github.com/dotnet/runtime/blob/75b3c8672a2828889e823c0d00d512403f0856ee/src/tools/illink/test/Mono.Linker.Tests.Cases/UnreachableBlock/BodiesWithSubstitutions.cs#L381-L409
+https://github.com/dotnet/runtime/blob/75b3c8672a2828889e823c0d00d512403f0856ee/src/tools/illink/src/linker/Linker.Steps/SweepStep.cs#L480-L509
+https://github.com/dotnet/runtime/blob/75b3c8672a2828889e823c0d00d512403f0856ee/src/tools/illink/src/linker/Linker/Annotations.cs#L49-L77
+
+15. Workload/test research
+--------------------------
+ILLink tests:
+src\tools\illink\test\Mono.Linker.Tests.Cases
+Good coverage: generics, interfaces, reflection/dataflow, substitutions, resources,
+symbols, references and metadata. Most are small correctness scenarios.
+ILLink.Tasks.Tests includes argument-plumbing tests, not rewriting workloads.
+Test harness itself uses Cecil for output inspection: timing/profiling all tests
+can accidentally measure test machinery, not just ILLink.
+
+Public broader inputs located:
+https://github.com/dotnet/performance/tree/main/src/scenarios/blazor
+https://github.com/dotnet/performance/tree/main/src/scenarios/blazorpizza
+These scenario harnesses are not established linker-time benchmarks; documented
+tests measure published size, and publish happens in preparation. Capture its
+ILLink invocation for this investigation. Historical framework configuration needs
+review. No performance-harness scenario was actually run.
+
+The assistant instead created the SDK stock Blazor template described above.
+No actual team/mobile production workload has been obtained.
+
+16. Measurement workflow to continue
+------------------------------------
+1. Finish reading existing trace views before changing source.
+2. Obtain ungrouped Instruction/get_Body callers and string allocation callers.
+3. Read GCStats, keeping GC CPU versus pause versus heap size distinct.
+4. Identify exact Microsoft.DotNet.Cecil binary/package/source version.
+5. Run repeated uninstrumented direct ILLink invocations with fixed inputs.
+6. Profile unchanged binary separately; instrumentation overhead is not baseline.
+7. Add targeted counters only for unresolved questions (e.g. decoded bodies or
+   repeated empty override queries), not all getters with serialized arguments.
+8. Compare unchanged ILLink + baseline versus compatible modified Cecil.
+9. Validate output obligations and actual loading of the intended modified build.
+10. Broaden to richer and eventual team workloads before generalizing.
+
+A simple external Stopwatch can time each direct command; check exit code and
+report median/spread over 5-10 initial repetitions, increasing if variability is
+large. New processes still have startup/JIT/PGO costs even with warm file cache.
+Do not silently remove runtime features or change trimming actions for speed.
+
+Universal API tracing/replay was discussed but NOT recommended as the first task:
+field accesses need call-site instrumentation, collections/callbacks complicate
+boundaries, logging getters can materialize data, and Cecil-only replay changes
+ILLink allocation lifetimes/GC context. Sampling is not exact call counting.
+
+17. Reference links
+--------------------
+PerfView:
+https://github.com/microsoft/perfview
+https://github.com/microsoft/perfview/blob/main/src/PerfView/SupportFiles/UsersGuide.htm
+Guide sections: GroupPats, IncPats, Drill Into, GC allocation analysis.
+UI labels were checked in:
+https://github.com/microsoft/perfview/blob/main/src/PerfView/Dialogs/RunCommandDialog.xaml
+
+ILLink event provider:
+https://github.com/dotnet/runtime/blob/v10.0.0/src/tools/illink/src/linker/Linker/LinkerEventSource.cs
+TypeMapInfo nearby-version source:
+https://github.com/dotnet/runtime/blob/v10.0.0/src/tools/illink/src/linker/Linker/TypeMapInfo.cs
+Cecil writer comparisons:
+https://github.com/jbevain/cecil/blob/882ca5eedda1e62eb41bd5869aeb15d8f1538e51/Mono.Cecil/AssemblyWriter.cs
+https://github.com/jbevain/cecil/blob/882ca5eedda1e62eb41bd5869aeb15d8f1538e51/Mono.Cecil.Cil/CodeWriter.cs
+
+SDK and logs:
+https://learn.microsoft.com/en-us/dotnet/core/deploying/trimming/trimming-options
+https://learn.microsoft.com/en-us/visualstudio/msbuild/obtaining-build-logs-with-msbuild
+https://github.com/dotnet/runtime/blob/main/docs/tools/illink/illink-options.md
+
+Cross-platform:
+https://learn.microsoft.com/en-us/dotnet/core/diagnostics/dotnet-trace
+Current dotnet-trace collect uses sampled thread stacks; do not equate this with
+ETW on-CPU sampling. Linux can collect diagnostics for Windows PerfView analysis,
+but OS facilities/metrics differ. No Linux measurements were performed.
+
+All measurements above are exploratory user-reported observations. Preserve their
+provenance when discussing them in the thesis; source citations are not independent
+verification of the numerical trace results.

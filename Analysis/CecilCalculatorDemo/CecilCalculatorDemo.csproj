@@ -1,0 +1,44 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 1. The woven core library -->
+    <Reference Include="Mono.Cecil">
+      <HintPath>/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/output/Mono.Cecil.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+
+    <!-- 2. The un-woven companion assemblies -->
+    <Reference Include="Mono.Cecil.Rocks">
+      <HintPath>/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/cecil-builder/rocks/bin/Release/netstandard2.0/Mono.Cecil.Rocks.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Pdb">
+      <HintPath>/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/cecil-builder/symbols/pdb/bin/Release/netstandard2.0/Mono.Cecil.Pdb.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Mdb">
+      <HintPath>/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/cecil-builder/symbols/mdb/bin/Release/netstandard2.0/Mono.Cecil.Mdb.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+
+    <!-- Target assemblies to be analyzed by your program -->
+    <None Include="..\..\learning-exploring\dll-inspection\bin\Release\net10.0\DllExplorerSample.dll"
+          Link="input\DllExplorerSample.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\learning-exploring\dll-inspection\bin\Release\net10.0\DllExplorerSample.pdb"
+          Link="input\DllExplorerSample.pdb" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  
+  <Target Name="ForceInstrumentedCecil" AfterTargets="ResolveAssemblyReferences;CopyFilesToOutputDirectory">
+  <Copy SourceFiles="/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/output/Mono.Cecil.dll"
+        DestinationFolder="$(TargetDir)"
+        OverwriteReadOnlyFiles="true" />
+  </Target>
+
+</Project>

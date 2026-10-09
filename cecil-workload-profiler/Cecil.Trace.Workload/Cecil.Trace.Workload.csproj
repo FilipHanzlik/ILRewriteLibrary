@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+  <!-- The freshly woven, hooked factory DLL -->
+    <Reference Include="Mono.Cecil">
+      <HintPath>/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/output/Mono.Cecil.dll</HintPath>
+    </Reference>
+  
+    <!-- The exact Rocks path -->
+    <Reference Include="Mono.Cecil.Rocks">
+      <HintPath>/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/cecil-builder/rocks/bin/Release/netstandard2.0/Mono.Cecil.Rocks.dll</HintPath>
+    </Reference>
+    
+    <!-- Companions from your input folder -->
+    <Reference Include="Mono.Cecil.Pdb">
+      <HintPath>/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/cecil-builder/symbols/pdb/bin/Release/netstandard2.0/Mono.Cecil.Pdb.dll</HintPath>
+    </Reference>
+    
+    <Reference Include="Mono.Cecil.Mdb">
+      <HintPath>/home/filip/Documents/MFF/bakalářka/cecil-workload-profiler/cecil-builder/symbols/mdb/bin/Release/netstandard2.0/Mono.Cecil.Mdb.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

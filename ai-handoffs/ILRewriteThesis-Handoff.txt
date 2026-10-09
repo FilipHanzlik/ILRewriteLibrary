@@ -1,0 +1,326 @@
+﻿IL Rewrite Library Thesis - Planning Context
+============================================
+
+Chosen thesis direction
+-----------------------
+The selected thesis topic is to build an IL/metadata rewrite library on top of System.Reflection.Metadata. The goal is not simply to shrink assemblies directly, but to create a reusable rewriting foundation that can later be used to port an existing ILStrip tool and support .NET/mobile trimming scenarios.
+
+Core motivation
+---------------
+The Microsoft team currently has tooling based on Mono.Cecil. Mono.Cecil provides a convenient mutable object model over .NET assemblies, but it can be relatively memory-heavy and may cause compatibility/maintenance problems when .NET versions change. The thesis library should explore a faster, more memory-efficient, more .NET-platform-aligned alternative built on System.Reflection.Metadata.
+
+Why Mono.Cecil can be problematic
+---------------------------------
+Mono.Cecil is mostly its own assembly reader/writer. It predates System.Reflection.Metadata and implements its own PE/metadata/signature/IL parsing and writing. It exposes a high-level object model:
+
+AssemblyDefinition
+  ModuleDefinition
+    TypeDefinition
+      MethodDefinition
+        MethodBody
+          Instructions
+
+This is ergonomic, but it means Cecil must understand and re-emit many metadata details itself. When new .NET versions introduce new metadata patterns, compiler-emitted attributes, runtime conventions, PDB details, trimming/AOT-related metadata, etc., Cecil may lag or preserve/emit things differently from official .NET tooling.
+
+System.Reflection.Metadata is maintained as part of the .NET ecosystem. It is lower-level, closer to ECMA-335 metadata, and designed for compilers/tools. It can be more future-compatible if the new library avoids overinterpreting unknown metadata and preserves/copies through what it does not need to modify.
+
+What System.Reflection.Metadata gives you
+-----------------------------------------
+System.Reflection.Metadata provides low-level APIs for reading ECMA-335 metadata. The writer-related APIs are mostly in related namespaces:
+
+- System.Reflection.Metadata
+  - MetadataReader
+  - MetadataReaderProvider
+  - BlobBuilder
+  - MethodBodyBlock
+- System.Reflection.Metadata.Ecma335
+  - MetadataBuilder
+  - MetadataRootBuilder
+  - BlobEncoder / Signature encoders
+  - InstructionEncoder
+  - MethodBodyStreamEncoder
+- System.Reflection.PortableExecutable
+  - PEReader
+  - ManagedPEBuilder
+  - PEHeaderBuilder
+
+It does not provide a high-level API like:
+
+assembly.Types["Foo"].Methods.Remove("Bar");
+assembly.Save("out.dll");
+
+That missing layer is essentially the thesis opportunity.
+
+ECMA-335 relevance
+------------------
+ECMA-335 is the CLI standard: the official specification for .NET assembly metadata, CIL/IL instructions, the common type system, metadata tables, signatures, heaps, and related runtime format. The full 6th edition PDF is about 574 pages, but the most relevant parts for this thesis are:
+
+- Partition II: Metadata definition and semantics
+- Partition III: CIL instruction set
+- Partition I: concepts/type system/runtime model
+- Partition V only if debug/PDB support is in scope
+
+The difficulty is not memorizing the whole standard. The difficulty is that metadata is relational and fragile: rows reference rows, signatures reference types/methods, IL references metadata tokens, and deletion can leave dangling references.
+
+High-level design idea
+----------------------
+Do not build a full Mono.Cecil clone as the primary design. Instead, build:
+
+Immutable read-only assembly view
++ lightweight handle-based views
++ explicit transactional rewrite plan
++ deterministic writer
++ validation/diagnostics
+
+Core idea:
+
+Original assembly is immutable.
+Views are lightweight wrappers over MetadataReader handles.
+Mutations are recorded as operations in an edit plan.
+The writer applies the plan in one or more deterministic passes.
+
+This gives much of Cecil's usability without forcing full materialization of a mutable object graph.
+
+Suggested public API shape
+--------------------------
+Example high-level usage:
+
+using var assembly = RewriteAssembly.Open(inputPath);
+using var editor = assembly.CreateEditor();
+
+editor.RemoveAttributes(a =>
+    a.TypeName == "Demo.RemoveAtBuildTimeAttribute");
+
+editor.RemoveMethods(
+    predicate: m => m.CustomAttributes.Any(a => a.TypeName == "Demo.StripAttribute"),
+    mode: RemovalMode.FailIfReferenced);
+
+var result = editor.Write(outputPath, new RewriteOptions
+{
+    Validate = true,
+    MaxDegreeOfParallelism = Environment.ProcessorCount
+});
+
+result.ThrowIfFailed();
+
+Lower-level usage:
+
+foreach (var type in assembly.MainModule.Types)
+{
+    Console.WriteLine(type.FullName);
+    foreach (var method in type.Methods)
+        Console.WriteLine(method.Name);
+}
+
+Important API principles
+------------------------
+1. Prefer lightweight views over rich mutable objects.
+2. Keep handles visible as escape hatches for advanced users.
+3. Use explicit edit operations instead of mutating collections directly.
+4. Record edits transactionally and apply them during write.
+5. Fail conservatively if a rewrite is unsafe.
+6. Provide good diagnostics, not mysterious exceptions.
+7. Keep final output deterministic even if analysis is parallel.
+8. Do not promise a full Cecil replacement unless the scope is intentionally huge.
+
+Possible internal structures
+----------------------------
+RewritePlan:
+- HashSet<EntityHandle> RemovedEntities
+- List<AddAttributeEdit> AddedAttributes
+- Dictionary<MethodDefinitionHandle, MethodBodyEdit> ReplacedBodies
+- HashSet<MethodDefinitionHandle> AffectedMethodBodies
+
+HandleMap:
+- old EntityHandle -> new EntityHandle
+- old StringHandle -> new StringHandle
+- old BlobHandle -> new BlobHandle
+- old UserStringHandle -> new UserStringHandle
+
+Diagnostics:
+- Cannot remove method X because it is referenced by method Y at IL_0012.
+- Cannot remove type T because remaining signature references it.
+- Attribute constructor could not be resolved.
+
+Writing model
+-------------
+Pure byte streaming is not realistic. A .NET assembly has metadata tables, heaps, row IDs, metadata tokens, PE offsets, method body RVAs, signatures, resources, and debug data. You cannot safely read byte-by-byte and patch blindly.
+
+The better model is "copy-through structured rewriting":
+
+1. Read original assembly structurally using PEReader and MetadataReader.
+2. Scan lazily and decide edits.
+3. Validate references and safety.
+4. Assign new handles/tokens for output metadata.
+5. Copy unchanged semantic blocks when possible.
+6. Re-encode changed semantic blocks.
+7. Emit a new PE using MetadataBuilder / MetadataRootBuilder / ManagedPEBuilder.
+
+So "streaming" should mean avoiding full object materialization and copying unchanged blocks, not literal one-pass byte streaming.
+
+Semantic blocks include:
+- metadata tables
+- metadata heaps (#Strings, #Blob, #GUID, #US)
+- method body stream
+- resources
+- PE headers/sections
+- debug/PDB data if supported
+
+Efficiency model
+----------------
+Cecil-style approach:
+- materializes Assembly/Module/Type/Method/Attribute/Instruction/etc. objects
+- convenient, but memory-heavy
+
+Proposed approach:
+- keep most data as handles/rows/blobs
+- decode only what predicates or edits need
+- record small edit plan
+- copy unchanged data through
+- rewrite only affected method bodies
+
+Estimated performance/memory gains depend heavily on workload:
+
+- Read-only scanning for attributes/types: possibly 2-10x faster, 5-20x less memory
+- Attribute add/remove: possibly 2-5x faster, 3-10x less memory
+- Selected member removal without decoding all IL: possibly 2-5x faster, 3-10x less memory
+- Heavy method-body rewriting: smaller gains, maybe 1.2-3x faster
+- Full Cecil-like object materialization: advantage may shrink greatly
+
+A credible thesis claim would be:
+For ILStrip-like transformations that inspect selected metadata and preserve most of the assembly, the transactional System.Reflection.Metadata design significantly reduces allocations and improves throughput compared to a Cecil-based implementation.
+
+Multithreading
+--------------
+Good uses of multithreading:
+- scanning many types/methods/attributes
+- scanning method bodies for metadata-token references
+- decoding signatures for validation
+- validating references
+- processing many assemblies in parallel
+
+Less suitable for multithreading:
+- final metadata emission and token assignment, because deterministic ordering matters
+
+Good pattern:
+- shared immutable removal set / token map
+- per-thread local diagnostics/findings
+- merge deterministically at the end
+
+Example: if removing method Demo.DebugHelpers.Log, scan IL bodies in parallel to find call/callvirt/newobj/ldtoken references to that method. Each method body can be scanned independently.
+
+Do all method bodies need decoding when stripping?
+-------------------------------------------------
+No.
+
+Metadata-only transformations often need no IL body decoding:
+- remove attributes named X
+- remove types/methods marked with [Strip]
+- remove assembly-level metadata
+
+If removal must be proven safe, method bodies may need a lightweight token scan, but not full object-model IL decoding. You can walk IL bytes and inspect only operands that are metadata tokens.
+
+Full IL decoding/re-encoding is needed only for affected methods if you actually rewrite method bodies, branch targets, exception regions, locals, or instruction sequences.
+
+Recommended transformation tiers:
+1. Metadata-only transformations: no method body decoding.
+2. Reference validation: lightweight scan of method bodies for metadata tokens.
+3. Method body rewriting: decode/re-encode only affected methods.
+4. Full IL editing: rich instruction model, optional and expensive.
+
+Correctness and validation
+--------------------------
+There is no single perfect tool that guarantees a rewritten assembly is semantically correct. A serious validation pipeline should combine:
+
+- PEReader / MetadataReader reload
+- metadata table/reference checks
+- ilverify where applicable
+- runtime load tests in isolated AssemblyLoadContext
+- reflection smoke tests
+- behavioral tests
+- comparison against original or Cecil for equivalent transformations
+- cross-version tests across .NET SDK/runtime versions
+
+Important principle:
+If unsure whether a destructive rewrite is safe, fail with a diagnostic instead of emitting a broken assembly.
+
+Realistic thesis scope
+----------------------
+Realistic:
+Build a System.Reflection.Metadata-based rewriting library for the subset of transformations needed by ILStrip, with lazy metadata access, explicit rewrite plans, conservative validation, parallel analysis, and benchmarks against Mono.Cecil.
+
+Risky/unrealistic:
+Replace all Mono.Cecil functionality with a complete general-purpose assembly editor.
+
+Strong bachelor-level scope:
+1. Read assembly metadata lazily.
+2. Expose convenient handle-based views.
+3. Support selected transformations:
+   - remove custom attributes
+   - add custom attributes
+   - remove selected methods/types/fields if safe
+   - optionally replace method body with stub/throw
+4. Preserve/copy unchanged metadata and IL efficiently.
+5. Remap metadata tokens correctly where needed.
+6. Validate output assemblies.
+7. Benchmark speed and memory against Cecil.
+8. Demonstrate a small ILStrip-like prototype.
+
+Possible removals policies
+--------------------------
+RemovalMode:
+- FailIfReferenced
+- RemoveMetadataOnly
+- ReplaceWithThrow
+- RemoveAndRewriteReferences
+
+For the thesis, prioritize FailIfReferenced and maybe ReplaceWithThrow. RemoveAndRewriteReferences is broad and dangerous.
+
+What would be hard
+------------------
+Hard areas:
+- metadata token remapping
+- generic signatures
+- custom attribute blobs
+- method body preservation and token rewriting
+- deletion safety
+- nested types / ownership relationships
+- references across metadata tables
+- PDB/debug info if included
+- strong-name signing if included
+- ReadyToRun/AOT handling if included
+
+Likely out of initial scope:
+- full arbitrary IL editing
+- full PDB rewriting
+- strong-name re-signing
+- complete Cecil-compatible API
+- changing generic arity/signatures broadly
+- assembly merging
+
+How to frame it
+---------------
+Good thesis framing:
+"A high-performance System.Reflection.Metadata-based assembly rewriting library for ILStrip-like transformations, using lazy metadata views, transactional edit plans, parallel analysis, and conservative validation."
+
+Avoid framing:
+"A full Mono.Cecil replacement."
+
+The latter would be shiny if actually achieved, but it is closer to a multi-year OSS project than a realistic bachelor thesis.
+
+Suggested questions for advisor/team
+------------------------------------
+1. Which exact ILStrip transformations must be supported first?
+2. Is full Cecil replacement expected, or only a subset?
+3. What benchmark assemblies should be used?
+4. What does ".NET upgrade compatibility" mean concretely?
+5. Is PDB preservation required?
+6. Is strong-name signing required?
+7. Is ReadyToRun/NativeAOT relevant?
+8. Should multithreading be inside one assembly, or is processing many assemblies in parallel enough?
+9. What is the minimal successful demo?
+10. Can the thesis fail safely on unsupported metadata patterns?
+
+Personal conclusion
+-------------------
+This is a strong and meaningful thesis idea. It has real-world motivation, good resume value, and deep technical content. It is realistic if scoped as a focused ILStrip-oriented rewriting library, not as a full Mono.Cecil replacement. The main intellectual contribution is the API/architecture tradeoff: provide a much nicer interface than raw System.Reflection.Metadata while preserving the performance advantages of handles, laziness, copy-through rewriting, explicit edit plans, and conservative validation.

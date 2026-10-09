@@ -1,0 +1,173 @@
+IL REWRITE THESIS - SUPPLEMENTAL HANDOFF
+Updated: 2026-09-14
+======================================
+
+Context
+-------
+Read ILRewriteThesis-Handoff.txt first. This supplement records subsequent
+discussion and learning progress, rather than repeating the original proposal.
+SRM below means System.Reflection.Metadata and its related IL/PE APIs.
+
+Direction and success criterion
+------------------------------
+The user wants an extensible architecture that could eventually support broad
+Mono.Cecil-like functionality. They intend to implement a useful subset as a
+bachelor thesis, leaving room for others to implement the remainder.
+The public interface will be designed later with the team; it is NOT finalized.
+
+Functional breadth is feasible in principle, but a mature replacement is much
+larger than a bachelor thesis. Drop-in Cecil API compatibility is a separate,
+more constraining goal, not an agreed requirement. Designing the whole means
+establishing extensible boundaries, not freezing every detail before experience.
+
+The user considers correctness a prerequisite, not sufficient justification:
+the project must deliver actual speed improvement over existing tooling.
+The strongest agreed performance hypothesis is:
+  large assemblies + sparse transformations + minimal object materialization.
+Avoiding a rich graph can reduce decoding, allocation, initialization, pointer
+traversal, and GC. Most bytes may still need scanning or emission.
+
+Corrections/qualifications to the original handoff
+------------------------------------------------
+- Its numerical performance multipliers are NOT measured or substantiated.
+  Later suggested ranges and targets were engineering hypotheses, not forecasts.
+  No equivalent-workload SRM-versus-Cecil full-trimming benchmark was found.
+- Cecil already uses deferred reading and can patch unresolved method bodies
+  without creating a full instruction graph. Do not compare against an
+  artificially eager baseline or claim Cecil always decodes every instruction.
+- SRM builders still materialize rows, heaps, dictionaries, and output buffers.
+  The goal is avoiding a full mutable assembly graph, not zero allocation.
+- Compacting definition tables can renumber surviving tokens. Unedited bodies
+  may therefore need relocation. A lightweight opcode/operand scan suffices for
+  token-only rewriting; no full control-flow graph is required for that alone.
+- IL token operands stay four bytes wide, so token-only relocation preserves
+  instruction offsets. Signature blobs use compressed encodings and may change
+  length when embedded type handles change.
+- Also handle user-string offsets, local-signature tokens, catch-type tokens,
+  metadata relationships, and debug references. Deleted targets need an explicit
+  safety/transformation policy, not just an old-to-new number.
+- SRM is not an automatic assembly copier or dependency resolver. Platform
+  alignment does not guarantee unknown metadata/streams will be preserved.
+  Unsupported image forms require explicit rejection or support policies.
+
+Trimming research: important distinction and prior art
+-----------------------------------------------------
+Known-removal stripping and full trimming are different benchmarks.
+Full trimming includes reachability, virtual/generic resolution, reflection
+dataflow, and diagnostics before sweeping/writing.
+ILLink uses Cecil objects throughout its analysis. A writer-only replacement
+cannot remove those costs. A handle-based analysis representation has a wider
+opportunity but requires more integration work.
+
+Current dotnet/runtime main was inspected and contains ILTrim.Core (NOT ILStrip),
+using the NativeAOT type system, dependency analysis, token mapping, SRM emission,
+and parallel work. This is important prior art and a possible integration target:
+https://github.com/dotnet/runtime/blob/main/src/coreclr/tools/ILTrim.Core/Driver.cs
+https://github.com/dotnet/runtime/blob/main/src/coreclr/tools/ILTrim.Core/ModuleWriter.cs
+Source existence does NOT establish shipping/default status, full ILLink parity,
+or a measured performance advantage. The inspected writer had preservation TODOs.
+The user's team's exact ILStrip implementation has not been identified.
+
+Other primary research references:
+https://github.com/dotnet/linker/issues/1997
+  SRM migration discussion; potential advantages, not a benchmark.
+https://github.com/dotnet/linker/pull/3075
+  Historical analysis/resolution fixes: 27,325 -> 23,520 CPU ms versus the
+  pre-regression baseline. Not evidence of SRM speedup.
+https://github.com/dotnet/android/commit/526172b431ab4e18256c59bfee3dfb64c595bc2a
+  Non-shrinking processing: 3.797 -> 3.105 seconds through Cecil-based
+  resolution/analysis optimizations. Not full trimming.
+https://github.com/dotnet/android/issues/11855
+  Metadata scanning comparisons with MetadataLoadContext: workload-dependent
+  gains and regressions; neither a raw-handle rewriter nor a trimming benchmark.
+
+Proposed evidence milestone: compare identical known-removal transformations
+on the team's actual assemblies against optimized Cecil; separately profile
+full trimming. Measure elapsed/CPU time, allocations, peak memory, and equivalent
+output obligations. Do not conflate allocation reduction with peak memory.
+
+Learning plan and current position
+----------------------------------
+User's immediate goal is to participate knowledgeably in interface discussions:
+1. Understand managed DLL structure.
+2. Understand what SRM offers.
+3. Understand what Cecil offers.
+
+Suggested learning order:
+  DLL basics -> Cecil hands-on -> SRM hands-on -> interface comparison.
+Suggested total: roughly 8-12 hours, not a fixed commitment.
+The user now reports having completed the DLL basics and sample inspection.
+The natural next learning step is Cecil, not implementing the thesis library.
+
+DLL topics already discussed
+---------------------------
+The user read:
+https://learn.microsoft.com/en-us/dotnet/standard/metadata-and-self-describing-components
+and explored a compiled DLL in ILSpy.
+
+Covered: managed vs native; PE as container rather than a separate file; EXE/DLL
+roles and the modern .NET apphost wrinkle; metadata vs IL; private definitions;
+assembly identity (name/version/culture/public key); AssemblyRef identities vs
+paths and runtime/tool resolution; tables/heaps/tokens; #Strings vs #US vs #Blob;
+method signatures; MethodDef RVA vs file offset vs virtual address; per-image
+base vs process address space; TypeDef FieldList/MethodList ownership ranges;
+attributes, properties, and compiler-generated records; brief COM/IDL/marshaling
+background; disassembly vs decompilation.
+
+Important UI realizations:
+- ILSpy formats the identity as a comment; the DLL stores binary metadata.
+- ILSpy often resolves heap indices to names and decodes signatures for display.
+- ldstr displays a literal, but its encoded operand references #US.
+- Custom attribute string arguments are in #Blob, not necessarily #US.
+- Runtime string v4.0.30319 does not imply targeting .NET Framework 4.
+- Metadata/IL are not literally the only two halves: other data needs preserving.
+
+Sample and environment
+----------------------
+Sample originally generated at:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout\Scratchpad\DllExplorerSample
+Files:
+  Calculator.cs
+  DllExplorerSample.csproj
+  Explore.txt
+Explore.txt is an exercise/setup guide, NOT a conversation handoff.
+
+The user subsequently compiled and opened a copy at this reported path:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite\docs\learning-exploring\dll-inspection\bin\Release\net10.0\DllExplorerSample.dll
+Treat that as the user's current sample location; its sources were not inspected
+there. Do not assume the original and relocated copies remain synchronized.
+
+Sample targets net10.0, has assembly version 1.2.3.0, neutral culture, no strong
+name, and uses no third-party packages.
+It contains:
+- ExplorationAttribute with constructor string and Revision named property.
+- AssemblyMetadata("Purpose", "DLL exploration").
+- Calculator.Add calling private CountCall; private _callCount field.
+- CallCount property, Label auto-property, DefaultDivisor constant.
+- DivideOrDefault with try/catch.
+- PrintGreeting calling Console.WriteLine with a string literal.
+- Identity<T> and a private nested HiddenHelper used by Twice.
+
+Initially the machine had x64 runtimes but no SDK. User was directed to install
+the Windows x64 .NET 10 SDK and later supplied compiled output in ILSpy.
+Current SDK installation was not re-queried; do not keep reporting it as missing.
+Build command from the project directory:
+  dotnet build .\DllExplorerSample.csproj -c Release
+This is a class library: no Main or dotnet run step is needed for inspection.
+
+ILSpy 11 Windows x64 MSI was recommended, not the Linux .rpm:
+https://github.com/icsharpcode/ILSpy/releases/download/v11.0/ILSpy_Installer_11.0.0.9375-x64.msi
+The user is now actively using ILSpy, including tables and IL view.
+
+Suggested next exercise (not yet performed)
+------------------------------------------
+Use Cecil to open the same DLL, enumerate types/methods/attributes, inspect a
+body, remove one attribute, and write to a NEW output path. Then try a simple
+body replacement and a caller. Learn definitions vs references, Resolve vs
+ImportReference, deferred materialization, and what Write handles.
+Then repeat the reading portion with PEReader/MetadataReader and study a tiny
+SRM emission example; do not begin with a general-purpose assembly copier.
+
+Teaching approach that has worked in this session: concrete C# examples,
+small metadata diagrams, and one concept at a time. The user has explicitly
+requested quick conceptual orientation rather than reading all of ECMA-335.

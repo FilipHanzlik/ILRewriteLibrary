@@ -1,0 +1,91 @@
+[
+  {
+    "event": "method",
+    "methodId": 573,
+    "name": "set_Operand",
+    "declaringType": "Mono.Cecil.Cil.Instruction, Mono.Cecil, Version=0.11.6.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e",
+    "assembly": "Mono.Cecil, Version=0.11.6.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e",
+    "moduleMvid": "726fa145-6515-4902-acfa-20b04bffc773",
+    "token": 100666184,
+    "signature": "Void set_Operand(System.Object)",
+    "isStatic": false,
+    "isConstructor": false,
+    "isTypeInitializer": false,
+    "isPublic": true,
+    "parameters": [
+      {
+        "name": "value",
+        "type": "System.Object, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e",
+        "byRef": false,
+        "out": false
+      }
+    ],
+    "returnType": "System.Void, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e",
+    "genericArguments": [],
+    "category": "write",
+    "classification": "heuristic-v1",
+    "sequence": 11196
+  },
+  {
+    "event": "enter",
+    "callId": 11197,
+    "threadId": 2,
+    "parentCallId": null,
+    "depth": 0,
+    "methodId": 573,
+    "origin": "external",
+    "caller": "CecilCalculatorDemo!CecilCalculatorDemo.Program::RewriteCalculator",
+    "receiver": {
+      "kind": "reference",
+      "type": "Mono.Cecil.Cil.Instruction, Mono.Cecil, Version=0.11.6.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e",
+      "id": 223,
+      "requiresIdentity": true,
+      "reconstruction": "reference",
+      "sourceCallId": 11164,
+      "sourcePath": "result"
+    },
+    "arguments": [
+      {
+        "kind": "string",
+        "type": "System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e",
+        "reconstruction": "value",
+        "requiresIdentity": false,
+        "value": "Hello from the Cecil-rewritten DLL"
+      }
+    ],
+    "replayIssues": [],
+    "sequence": 11197
+  },
+  {
+    "event": "leave",
+    "callId": 11197,
+    "threadId": 2,
+    "status": "returned",
+    "elapsedTicks": 894,
+    "receiver": {
+      "kind": "reference",
+      "type": "Mono.Cecil.Cil.Instruction, Mono.Cecil, Version=0.11.6.0, Culture=neutral, PublicKeyToken=50cebf1cceb9d05e",
+      "id": 223,
+      "requiresIdentity": true,
+      "reconstruction": "reference",
+      "sourceCallId": 11164,
+      "sourcePath": "result"
+    },
+    "result": {
+      "kind": "unavailable",
+      "type": null,
+      "reconstruction": "unavailable",
+      "reason": "void"
+    },
+    "arguments": [
+      {
+        "kind": "string",
+        "type": "System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e",
+        "reconstruction": "value",
+        "requiresIdentity": false,
+        "value": "Hello from the Cecil-rewritten DLL"
+      }
+    ],
+    "sequence": 11198
+  }
+]

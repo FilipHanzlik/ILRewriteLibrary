@@ -1,0 +1,1090 @@
+IL REWRITE THESIS - CECIL TRACE GENERATION, RECORDER, ANALYZER AND DEMO
+Updated: 2026-09-23
+====================================================================
+
+Purpose
+-------
+Self-contained continuation for the C# code that instruments dotnet/cecil,
+generates ordered invocation logs, analyzes those logs, and demonstrates
+rewriting the earlier calculator DLL.
+
+This records IMPLEMENTED behavior, saved artifacts, actual validation, and
+limitations discussed with the user. It supersedes the implementation-status
+and "not implemented yet" statements in the September 20 instrumentation
+handoff. It does not supersede the earlier thesis research or profiling data.
+
+Quick reading order:
+  1-4: Current state, provenance, locations and source layout.
+  5-8: Design, call origin, schema, categories and reconstruction.
+  9:   How to build, run and record the calculator example.
+  10:  Saved recording and exact results.
+  11:  Semantic accuracy audit, distinct from structural validation.
+  12:  Method/property/field coverage.
+  13:  Limitations and missing functionality.
+  14:  Tests already run.
+  15-16: Porting, next work, and continuation cautions.
+
+
+1. EXECUTIVE STATUS AND USER INTENT
+----------------------------------
+The user wants to understand Cecil's data access and modification behavior to
+inform an eventual SRM-backed rewriting library. The implementation initially
+changes observability, not Cecil's representation or the consumer's algorithm.
+
+The user originally requested:
+  - Distinguish calls originating inside versus outside Cecil.
+  - A single ordered log sufficient to describe calls and their arguments.
+  - Reconstruction-oriented values, with explicit identity requirements/gaps.
+  - Read/write and other operation categories for later quantitative analysis.
+  - Honest coverage limitations, especially direct field access.
+
+Implemented:
+  - Opt-in recorder source compiled into core Cecil.
+  - C# IL weaver that adds recording calls to a separate compiled Cecil DLL.
+  - Streaming JSONL analyzer.
+  - Synthetic workloads and nine NUnit integration tests.
+  - A separate .NET 10 calculator-rewriting console demo.
+  - A complete recorded calculator run and a read-only semantic audit of it.
+
+NOT implemented:
+  - A general replay program that reproduces arbitrary traces.
+  - Instrumentation of every field/memory access or consumer call site.
+  - A real ILLink/Blazor/macios integration or performance study.
+  - Recording-size budgets or low-overhead/counters-only modes.
+
+User-approved decisions:
+  - Use the newer selected dotnet/cecil revision and establish a NEW baseline.
+  - Preserve existing public signatures. Do NOT append optional origin arguments
+    to Cecil APIs; that would change binary signatures and contracts.
+  - Work directly in the existing fork directory, not an isolated worktree.
+  - Keep installed SDK binaries and shared NuGet packages untouched.
+
+Current code is persistent but UNCOMMITTED. No commits or pushes were requested
+or made. The user has been learning the implementation incrementally and now
+wants a handoff. No background worker/process needs to finish this task.
+
+
+2. BASELINE AND DEPENDENCY PROVENANCE: DO NOT MIX EXPERIMENTS
+----------------------------------------------------------
+Cecil fork branch:
+  instrumentation
+
+HEAD/base:
+  9e14a6389353d0a2795e88c2025643315cb77e7a
+
+Commit subject:
+  Fix WriteCompressedInt32 endianness on big-endian hosts (#517)
+
+The original main branch was left untouched.
+
+The selected source is dotnet/cecil, not a new SRM implementation. It still uses
+Mono.Cecil namespaces, Mono.Cecil.csproj, and the Mono.Cecil assembly name.
+The original upstream repository is jbevain/cecil; its NuGet package is
+Mono.Cecil. The .NET fork's package is Microsoft.DotNet.Cecil. Namespace and
+assembly simple name alone do not distinguish them.
+
+The preserved local original build has this assembly identity:
+  Mono.Cecil, Version=0.11.6.0, Culture=neutral,
+  PublicKeyToken=50cebf1cceb9d05e
+
+This is an assembly identity, not a claim about a published NuGet version.
+
+CRITICAL HISTORICAL DISTINCTION:
+The previously profiled ILLink.Tasks 10.0.12 uses
+Microsoft.DotNet.Cecil 0.11.5-alpha.26422.108.
+Its pinned dotnet/dotnet build revision was:
+  95017c711e6afc1085133d440e42b4bd78155701
+The corresponding Cecil source revision was:
+  17bc919d038108f453c81185804df33a46cf523d
+
+The user explicitly chose 9e14a63 instead of matching that older dependency.
+Do not compare the earlier ILLink/PerfView measurements with this instrumentation
+as if instrumentation were the only changed variable.
+
+For a real consumer, verify source/package provenance, API compatibility and the
+ACTUALLY LOADED binary path/hash. Matching assembly version/signing identity alone
+does not certify compatibility with arbitrary ILLink versions.
+
+
+3. LOCATIONS AND TOOLCHAIN
+--------------------------
+Project root used below:
+  C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite
+
+Cecil fork:
+  <root>\Analysis\CecilAnalysisFork
+
+Calculator rewriter:
+  <root>\Analysis\CecilCalculatorDemo
+
+Original calculator source/project:
+  <root>\docs\learning-exploring\dll-inspection\Calculator.cs
+  <root>\docs\learning-exploring\dll-inspection\DllExplorerSample.csproj
+
+Original compiled calculator and symbols:
+  <root>\docs\learning-exploring\dll-inspection\bin\Release\net10.0\DllExplorerSample.dll
+  <root>\docs\learning-exploring\dll-inspection\bin\Release\net10.0\DllExplorerSample.pdb
+
+This handoff:
+  <root>\docs\ai-handoffs\ILRewriteThesis-Handoff-Cecil-Recorder-2026-09-23.txt
+
+Detailed existing implementation guide:
+  <fork>\Tracing.md
+
+Earlier instrumentation/provenance handoff:
+  C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout\
+  ILRewriteThesis-Handoff-Cecil-Instrumentation.txt
+  (That file was not present in docs\ai-handoffs when this handoff was written.)
+
+Toolchain:
+  - Windows; use PowerShell and quoted Windows paths.
+  - Git executable: C:\Program Files\Git\cmd\git.exe
+    Git is not on the default PATH in this environment.
+  - The fork's pinned SDK is installed at <fork>\.dotnet\dotnet.exe:
+      11.0.100-preview.6.26359.118
+    Arcade: 11.0.0-beta.26411.119
+  - Weaver, analyzer, synthetic workload and integration tests target net11.0.
+  - The diagnostic core used here targets netstandard2.0.
+  - The normal core also targets net10.0.
+  - Calculator source and rewriter target net10.0.
+  - System SDK: 10.0.401 at C:\Program Files\dotnet.
+  - Recorded calculator process runtime: 10.0.12.
+
+Use the repository-local dotnet for fork/tools builds and tool execution.
+Use system dotnet from the calculator demo directory for that project's build
+and execution. The fork's global.json selects a different SDK; current working
+directory matters to SDK selection, not just the --project argument.
+
+The original isolated-worktree setup error was misleading: the local repository
+is valid, but Git was unavailable through the default PATH. The exact host-side
+setup failure was not established. The user approved direct-folder work, which
+is already set up. Do not request another workspace conversion.
+
+
+4. SOURCE LAYOUT AND RESPONSIBILITIES
+------------------------------------
+Most original Mono.Cecil*, Mono, collections and crypto source directories
+compile together into core Cecil; they are not each independent projects.
+
+Modified existing files in the fork:
+  Mono.Cecil.csproj
+    Includes Mono.Cecil.Diagnostics\*.cs only when CecilTraceSupport=true.
+    Normal builds retain their original AOT analysis setting.
+    Diagnostic builds do not claim the same AOT/trimming compatibility.
+  README.md
+    Links to Tracing.md.
+
+New recorder directory, with NO separate .csproj:
+  Mono.Cecil.Diagnostics\CecilTrace.cs
+    Hook API, activation, caller inspection, per-thread nesting, shared writer,
+    producer registration, body observations, shutdown checkpoints.
+  Mono.Cecil.Diagnostics\TraceValueWriter.cs
+    Values, field snapshots, weak reference identities, producer paths, limits.
+  Mono.Cecil.Diagnostics\TraceMethod.cs
+    Method descriptors, heuristic categories and method-level replay issues.
+  Mono.Cecil.Diagnostics\TraceJson.cs
+    Small serializer without adding a consumer-side JSON package dependency.
+  Mono.Cecil.Diagnostics\CecilTraceInstrumentedAttribute.cs
+    Marker type compiled into the diagnostic core; weaver applies the attribute
+    to reject accidental double instrumentation.
+
+New executable/tool projects:
+  tools\Cecil.Trace.Weaver\Program.cs
+    Weaver CLI.
+  tools\Cecil.Trace.Weaver\TraceWeaver.cs
+    Metadata validation, IL rewriting, symbol/signing handling and coverage.
+  tools\Cecil.Trace.Analysis\Program.cs
+    Analyzer CLI and summary output.
+  tools\Cecil.Trace.Analysis\TraceAnalyzer.cs
+    Streaming validation and aggregation; no Cecil dependency.
+  tools\Cecil.Trace.Workload\Program.cs
+    Synthetic scenarios: readwrite, values, edges, shapes, companions, shutdown.
+  tools\Cecil.Trace.Tests\TraceTests.cs
+    Nine integration tests using the existing NUnit infrastructure.
+
+The tools are not a new replacement Cecil solution. No new root solution was
+added. Project references opt into diagnostic core explicitly.
+The test project has a DIRECT diagnostic netstandard2.0 core reference so an
+uninstrumented transitive net10.0 core does not win dependency selection.
+
+Separate calculator project:
+  CecilCalculatorDemo.csproj
+    Defaults to a binary reference to the preserved UNINSTRUMENTED core:
+      ..\CecilAnalysisFork\artifacts\trace-baseline\Mono.Cecil.dll
+    CecilAssemblyPath is an MSBuild override for isolated experiments.
+    Copies the existing calculator Release DLL/PDB into its output's input folder.
+  Program.cs
+    Explicit Main entry point, path validation, Cecil identity/hash printing,
+    RewriteCalculator, original-input hash check.
+  DemoVerification.cs
+    Executes original and rewritten calculators in separate AssemblyLoadContexts
+    and checks behavior using ordinary .NET reflection, not more Cecil calls.
+  README.md
+    Normal usage and explanation of the original Cecil reference.
+
+The demo and this handoff are OUTSIDE the Cecil fork's Git root. A future commit
+inside the fork will not automatically capture these sibling files.
+
+
+5. ARCHITECTURE: COMPILE, WEAVE, ACTIVATE, ANALYZE
+------------------------------------------------
+All implementation was written in C#. The tool does not merely emit a mysterious
+prebuilt DLL. Cecil is used to rewrite another compiled copy of Cecil.
+
+Four distinct stages:
+  A. Compile core with CecilTraceSupport=true.
+     Recorder source becomes part of Mono.Cecil.dll, but original method bodies
+     still do not call it.
+  B. Run the weaver on that diagnostic DLL.
+     The weaver inserts IL calls to the recorder's hook API.
+  C. Run a consumer that actually loads the woven DLL, with CECIL_TRACE_FILE set.
+     The recorder emits the trace as the consumer executes.
+  D. Run the separate analyzer over the completed JSONL file.
+
+The recorder is a library hook API, NOT an executable entry point. Its central
+public methods are:
+  bool IsEnabled { get; }
+  TraceCall Enter(RuntimeMethodHandle method, RuntimeTypeHandle declaringType,
+                  object target, object[] arguments)
+  void Complete(TraceCall call, object target, object result, object[] arguments)
+  void Fail(TraceCall call, Exception exception)
+  object Unavailable(string reason)
+  void Flush()
+
+TraceCall exposes Origin and CallId.
+
+The weaver does NOT inject the recorder implementation itself. Core input must
+already contain the compiled hook and marker types. Just running this weaver
+against a random original Cecil DLL is insufficient.
+
+CLI:
+  Cecil.Trace.Weaver <input.dll> <output.dll>
+      [--key <cecil.snk>] [--core <diagnostic Mono.Cecil.dll>]
+
+--key:
+  Matching strong-name signing key for signed input. It is not encryption,
+  not an Authenticode certificate, and not a source-code access key.
+  The output's public-key identity is checked.
+
+--core:
+  Diagnostic core used when weaving a companion assembly.
+  Supplies recorder references and must have matching assembly identity.
+  May be a compatible woven or unwoven diagnostic core.
+  It does not copy/instrument core automatically and is not a .NET runtime path.
+  The calculator uses core only, so its recorded run did not need --core.
+
+Supported target assembly simple names:
+  Mono.Cecil
+  Mono.Cecil.Rocks
+  Mono.Cecil.Pdb
+  Mono.Cecil.Mdb
+
+These names are guards, not proof that all versions/forks are compatible.
+
+Weaver design:
+  - Reads assembly metadata/IL using Cecil, not CLR execution of the target.
+  - Uses a resolver to find referenced assemblies. This is not NuGet restore.
+  - InMemory reading copies input bytes and releases the original file stream;
+    it does not mean every body is eagerly decoded.
+  - Requests symbols with DefaultSymbolReaderProvider(false). False means
+    throwIfNoSymbol=false, not "disable symbols"; subsequent guards reject
+    advertised symbols that could not be loaded.
+  - Enumerates nested types and all eligible methods, including private helpers,
+    accessors and compiler-generated methods. Visibility only gates the exposed
+    field inventory; it does not restrict method weaving.
+  - Guards entry with IsEnabled before creating argument captures.
+  - Uses runtime method/type handles for exact method and generic context.
+  - Marks woven methods NoInlining and removes AggressiveInlining.
+  - Routes returns to completion logic and records escaping exceptions before
+    rethrowing the original exception.
+  - Handles generic self references, structs, short branches, existing exception
+    handlers, and constructors after base/this initialization.
+  - Excludes the diagnostics namespace to prevent recorder recursion.
+
+Explicit rejection/skip boundaries:
+  - Unsupported assembly name or managed multi-module target assembly.
+  - Already-applied instrumentation marker.
+  - Existing output or same input/output path.
+  - Missing required matching signing key.
+  - Unsupported loaded debug-symbol format or advertised but unavailable symbols.
+  - No managed body, diagnostics implementation, varargs, managed-reference
+    returns, tail/jmp patterns, unrecognized constructor-initializer patterns.
+  - Unsupported values can be marked as capture gaps even when the method itself
+    can still be instrumented.
+
+Multi-module restriction applies to the Cecil DLL BEING WOVEN. It does not say
+that an application processed later by Cecil can contain only one DLL.
+Several DLLs normally mean several assemblies; a WebAssembly module is a
+different concept from a managed multi-module assembly.
+
+Portable and embedded portable PDBs are rewritten to embedded portable PDBs.
+The named-symbol-provider adapter is needed when staging PE output in memory:
+the symbol writer still needs the intended file name.
+
+Outputs:
+  A separate instrumented DLL.
+  <output.dll>.coverage.json containing method status/reasons, value gaps and
+  exposed field declarations. This is STATIC coverage, not runtime frequency.
+
+Weave once per prepared binary and reuse that DLL across workloads. A different
+build/version needs its own preparation and validation. Re-weaving an already
+woven DLL is rejected.
+
+
+6. CALL ORIGIN AND CLASSIFICATION: PRECISE MEANING
+------------------------------------------------
+Origin is PER INVOCATION, not a permanent property of a method and not public
+versus private visibility.
+
+The entry hook obtains the immediate caller through:
+  new StackFrame(2, false).GetMethod()
+
+It records:
+  internal: caller belongs to the executing core Cecil assembly or the recognized
+            Rocks/Pdb/Mdb family.
+  external: immediate managed caller is outside that family.
+  unknown:  caller frame could not be determined.
+
+NoInlining is important to retain the woven method/hook frames. It cannot
+prevent every ambiguity from uninstrumented caller inlining, tail calls or
+runtime-generated transitions.
+
+caller records assembly, declaring type and method.
+parentCallId separately records the enclosing observed Cecil call.
+The thread-local nesting stack does NOT determine origin.
+
+Consequences:
+  - The same API can be external in one invocation and internal in another.
+  - External callback re-entry can have a non-null parentCallId.
+  - Framework algorithms calling Cecil comparers/hash methods count as external.
+  - LINQ enumerating Cecil collections also produces external calls.
+  - Runtime type initializers are marked as runtime work, not replay requests.
+  - Never blindly replay every external record independently.
+
+Classification is heuristic-v1:
+  read         Getters, inspection/enumeration, read-shaped APIs.
+  write        Setters and recognized collection/IL mutations.
+  create       Constructors and factory-shaped methods.
+  materialize  Recognized decoding operations.
+  resolve      Resolution/import-shaped operations.
+  emit         Assembly/module/writer output operations.
+  lifetime     Disposal/close/finalization.
+  other        No recognized classification rule.
+
+These are logical CALL SHAPES, not individual memory reads/writes or proof of
+purity. A getter can resolve, decode, allocate or mutate a cache. Emit can touch
+many objects. The ratio excludes create/resolve/materialize/emit/etc.; report
+these alongside the ratio. Zero writes gives a null ratio, not infinity.
+
+IMPORTANT NEW OBSERVATION FROM THE CALCULATOR RUN:
+  Reported external calls: 1,410
+    CecilCalculatorDemo immediate callers, including predicates:     69
+    System.Linq enumeration:                                        75
+    System.Private.CoreLib runtime/framework callbacks:           1,266
+
+All 1,266 CoreLib callbacks had an enclosing observed Cecil call. This includes
+type initialization and collection equality/hash callbacks during Cecil work.
+
+For the 69 demo-assembly callers alone, categories were:
+  read 44, write 9, create 5, other 9, emit 1, lifetime 1.
+
+Thus the report's external read/write ratio is NOT automatically the ratio of
+explicit demo/ILLink requests. Filtering only to the demo caller is a different
+metric and also omits LINQ calls made on its behalf. Caller/ancestry-aware logical
+boundary aggregation remains future work. The source of a call is available in
+the raw log; do not flatten this distinction away in thesis conclusions.
+
+
+7. RECORDER LIFETIME, SAFETY AND JSONL SCHEMA
+-------------------------------------------
+Activation:
+  CECIL_TRACE_FILE must be set before starting the consumer.
+  The consumer must actually load the woven Cecil DLL.
+  The output directory must already exist.
+  {pid} in the filename is replaced by the process ID.
+
+No variable => recording disabled. Woven-but-disabled IL still differs from an
+unmodified build, including inlining/EH behavior; it is not a pristine
+performance baseline.
+
+Configuration is read on first use. Mid-run toggling is not supported.
+The recorder is a lazy singleton PER LOADED CORE ASSEMBLY, shared by the
+companions and threads using that core. It is not one magical global writer
+across all AssemblyLoadContexts/processes.
+
+Use one instrumented Cecil load context per process and unique output filenames.
+The file is opened with CreateNew: no overwrite or append. A second writer using
+the same file fails explicitly.
+
+A global lock serializes complete records and assigns sequence numbers.
+A thread-static current-call stack tracks nesting.
+A thread-static capture guard suppresses recorder-induced recursive tracing.
+The writer flushes each record. Recording failures propagate; they do not
+silently turn into successful runs with missing data.
+
+Schema version: 1
+Each record is one JSON line. Main events:
+  session
+    Schema, process/runtime, actual loaded core path/SHA256/MVID, limits,
+    timestamp frequency, byte order and global limitations.
+  method
+    Method ID, type/assembly/MVID/token, signature/overload, parameters and
+    directions, generic arguments, constructor/type-initializer flags, category.
+  enter
+    Sequence, callId, methodId, parentCallId, threadId, depth, origin, caller,
+    receiver, arguments, replay issues and optional observations.
+  leave
+    Matching callId/thread, returned/threw, inclusive elapsed ticks, result and
+    post-call captures on success; exception information/state gap on failure.
+  shutdown-start
+    Process-exit notification and open/total counts.
+  shutdown-continued
+    Reopens a prior shutdown checkpoint when later exit handlers call Cecil.
+  session-end
+    Total calls, open calls, recorderFailed and shutdown-checkpoint information.
+
+callId is the sequence number of its enter record. Method descriptors and other
+events also consume sequence numbers. Pair by IDs/thread/parents, not adjacent
+lines. A void result is represented as unavailable with reason "void"; it is not
+an unexpectedly missing return value.
+
+Important shutdown fix:
+Do not close the recorder inside its ProcessExit callback. Other exit handlers
+may still use Cecil. The current implementation leaves the process-lifetime
+AutoFlush stream usable, writes clean checkpoints when no calls remain, and
+lets the OS close it at termination. Later calls use shutdown-continued and a
+new checkpoint. The final record must be a clean session-end.
+
+The analyzer streams records, retaining descriptors, counters, active stacks and
+bounded issue examples, not the whole object history. It checks sequences,
+descriptors, nesting, argument counts, statuses, snapshot shapes, producer
+temporal ordering and the final checkpoint. It supports the earlier schema-1
+single-terminal-end form too.
+
+An important temporal-validation fix:
+A nested call can enter after its parent and return an object used in the
+parent's leave snapshot. Validate producer timing against the SNAPSHOT sequence,
+not only the parent's entry call ID.
+
+Special body observations, obtained without invoking getters:
+  MethodDefinition.get_Body entry:
+    bodyWasCachedAtEntry, bodyRvaAtEntry.
+  Successful CodeReader.ReadMethodBody(MethodDefinition) completion:
+    materializationCompleted, declaredIlBytes, decodedInstructionCount.
+
+These count completed decoding EVENTS, not necessarily distinct bodies.
+A cache miss is not itself proof that decoding occurred. The private helper
+overload is not counted a second time.
+
+Elapsed ticks include instrumentation and nested work. Do not sum all inclusive
+times as independent costs or treat them as uninstrumented performance data.
+
+
+8. VALUE CAPTURE, OBJECT IDENTITY AND RECONSTRUCTION
+---------------------------------------------------
+The original wish to construct a fresh argument object for every call is not
+generally sound. Cecil node identity matters for collections, instruction
+removal, shared branch targets, attached definitions and resolution.
+
+Snapshots distinguish:
+  value
+    Null, scalars, strings, enums and supported immutable/reflection values.
+  snapshot
+    Arrays/bytes, struct fields and known reader/writer/module option objects.
+  reference
+    Previously produced object with id, sourceCallId and sourcePath.
+  unavailable
+    Explicit reason requiring a driver/adapter, preserved input or more data.
+
+Do not assume all scalar JSON values are numbers: integers may be represented
+as strings to preserve exact values. Respect the recorded type/encoding.
+Float/double bits are preserved in base64; decimal preserves component integers.
+Strings with lone UTF-16 surrogates use utf16le-base64 rather than lossy JSON.
+
+Objects have weak identities through ConditionalWeakTable; observing an object
+does not retain it strongly. Repeated occurrences of an ID must map to the same
+reconstructed object when requiresIdentity=true.
+
+External constructors, successful return values and ref/out results establish
+producer recipes. Paths include:
+  receiver
+  result
+  arguments[index]
+  array coordinates, including non-zero lower bounds/multiple dimensions
+  .field(percent-encoded-declaring-type,percent-encoded-field-name)
+
+Field path segments use Uri.EscapeDataString and name real fields, not getters.
+sameSnapshot references preserve cycles/aliases. Value-type receivers include
+their field state after successful calls. External derived objects are not
+treated as constructible just because their Cecil base constructor was seen.
+
+Snapshots use fields rather than arbitrary Cecil getters or ToString, avoiding
+lazy materialization and other observer-induced behavior.
+Array rank, dimensions, lower bounds, aliases and cycles are represented.
+Unsupported/truncated mutable arrays must stay explicitly unavailable even if
+they have an object producer; a producer is not a complete content snapshot.
+
+Limits, all requiring positive integer values:
+  CECIL_TRACE_MAX_DEPTH   = 6
+  CECIL_TRACE_MAX_ITEMS   = 256
+  CECIL_TRACE_MAX_BYTES   = 65536
+  CECIL_TRACE_MAX_STRING  = 16384 UTF-16 code units
+
+Exceeding a limit is marked unavailable, not silently truncated or replaced with
+a success-shaped placeholder.
+
+Streams, delegates, custom resolvers/services, native pointers, dynamic
+reflection values and unproduced opaque objects may require adapters.
+Internally created objects often lack an EXTERNAL producer; that warning does
+not mean they must all be created individually by a logical external replay.
+
+Input filenames are recorded, but file contents, symbols and dependencies are
+NOT automatically bundled into the trace. Preserve an input bundle separately.
+Output paths need remapping during replay. An externally supplied FileStream is
+explicitly unavailable as a self-contained replay recipe.
+
+Reference copies, reference-equality tests, consumer locals, external array
+writes and external services are not recorded. Obtaining an object through an
+instrumented API is visible; simply copying its reference is not.
+
+There is a tested BOUNDED reconstruction example for instruction/collection
+operations, values and identity. There is NO general replay CLI, automatic LLM
+replay generator or proof of arbitrary-workload reproducibility.
+
+
+9. USAGE: NORMAL DEMO AND A FRESH RECORDED RUN
+--------------------------------------------
+9.1 Normal demo
+
+From <root>\Analysis\CecilCalculatorDemo:
+  dotnet run
+
+It uses the original preserved Cecil binary by default. If the original
+calculator DLL/PDB is missing, first build the existing sample:
+  dotnet build "..\..\docs\learning-exploring\dll-inspection\DllExplorerSample.csproj" -c Release
+
+Optional explicit paths:
+  dotnet run -- "<calculator.dll>" "<new-output.dll>"
+  dotnet run -- --help
+
+The demo expects the original sample with matching portable/embedded portable
+symbols. It rejects identical input/output paths and existing output files.
+No-argument runs use copied inputs and create a new timestamped output directory.
+The output has updated embedded portable symbols.
+
+Its three intentional changes:
+  - Add(left, right) returns left + right + 10, retaining CountCall().
+  - PrintGreeting prints "Hello from the Cecil-rewritten DLL".
+  - ExplorationAttribute is removed from Add only.
+
+Verification checks original Add(2,3)=5, rewritten=15, CallCount=1, correct
+greetings/attributes, normal division, divide-by-zero handling and the nested
+helper behind Twice. Input SHA256 must remain unchanged.
+
+9.2 Preparing tools on a fresh machine/check-out
+
+On this machine the local SDK, restored assets, baseline and tool builds exist.
+Use existing repository bootstrap when the pinned SDK is absent:
+  .\build.cmd -configuration Release -projects Mono.Cecil.csproj /p:TargetFrameworks=netstandard2.0 /p:TargetFramework=netstandard2.0
+
+Preserve an ordinary CecilTraceSupport=false build BEFORE replacing build
+outputs with diagnostic ones. Do not overwrite the saved trace-baseline.
+The original performance baseline must come from the same source/toolchain.
+
+To build all diagnostic tools/workloads/companions and run integration tests:
+  .\.dotnet\dotnet.exe test .\tools\Cecil.Trace.Tests\Cecil.Trace.Tests.csproj -c Release
+
+For a targeted recording setup, building the weaver also builds its core
+reference with CecilTraceSupport=true and TargetFramework=netstandard2.0.
+The analyzer can be built independently.
+
+9.3 Copyable fresh-recording recipe for the CURRENT machine
+
+This does not edit the demo project default or replace installed libraries.
+It stages a separate woven core and executable. It assumes dependencies were
+already restored. If a --no-restore build fails specifically because assets or
+packages are missing, rerun that build without --no-restore.
+Do not rerun against an existing recording directory; choose a fresh one.
+
+BEGIN RECORDING COMMANDS
+$ErrorActionPreference = 'Stop'
+$root = 'C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite'
+$fork = Join-Path $root 'Analysis\CecilAnalysisFork'
+$demo = Join-Path $root 'Analysis\CecilCalculatorDemo'
+$localDotnet = Join-Path $fork '.dotnet\dotnet.exe'
+$systemDotnet = 'C:\Program Files\dotnet\dotnet.exe'
+$run = Join-Path $demo ('recordings\' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$weaver = Join-Path $fork 'artifacts\bin\Cecil.Trace.Weaver\Release\net11.0\Cecil.Trace.Weaver.dll'
+$analyzer = Join-Path $fork 'artifacts\bin\Cecil.Trace.Analysis\Release\net11.0\Cecil.Trace.Analysis.dll'
+$diagnosticCore = Join-Path $fork 'artifacts\bin\Mono.Cecil\Release\netstandard2.0\Mono.Cecil.dll'
+$wovenCore = Join-Path $run 'cecil\Mono.Cecil.dll'
+$app = Join-Path $run 'app'
+$previousPath = $env:PATH
+$previousTrace = $env:CECIL_TRACE_FILE
+
+Push-Location $fork
+try {
+    $env:PATH = 'C:\Program Files\Git\cmd;' + $env:PATH
+    & $localDotnet build .\tools\Cecil.Trace.Weaver\Cecil.Trace.Weaver.csproj -c Release --no-restore
+    if ($LASTEXITCODE -ne 0) { throw 'Weaver/diagnostic core build failed.' }
+    & $localDotnet build .\tools\Cecil.Trace.Analysis\Cecil.Trace.Analysis.csproj -c Release --no-restore
+    if ($LASTEXITCODE -ne 0) { throw 'Analyzer build failed.' }
+
+    if (Test-Path -LiteralPath $run) { throw 'Choose a new recording directory.' }
+    New-Item -ItemType Directory -Path (Join-Path $run 'cecil') | Out-Null
+    & $localDotnet $weaver $diagnosticCore $wovenCore --key (Join-Path $fork 'cecil.snk')
+    if ($LASTEXITCODE -ne 0) { throw 'Weaving failed.' }
+
+    Set-Location $demo
+    & $systemDotnet build .\CecilCalculatorDemo.csproj -c Debug --no-restore -o $app ('-p:CecilAssemblyPath=' + $wovenCore)
+    if ($LASTEXITCODE -ne 0) { throw 'Staged demo build failed.' }
+    if ((Get-FileHash -LiteralPath $wovenCore).Hash -ne (Get-FileHash -LiteralPath (Join-Path $app 'Mono.Cecil.dll')).Hash) {
+        throw 'The staged consumer did not receive the woven core.'
+    }
+
+    $env:CECIL_TRACE_FILE = Join-Path $run 'calls.jsonl'
+    & $systemDotnet (Join-Path $app 'CecilCalculatorDemo.dll') (Join-Path $app 'input\DllExplorerSample.dll') (Join-Path $run 'rewritten\DllExplorerSample.dll') | Tee-Object -FilePath (Join-Path $run 'console.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Recorded demo failed.' }
+    $env:CECIL_TRACE_FILE = $previousTrace
+
+    & $localDotnet $analyzer analyze (Join-Path $run 'calls.jsonl') --output (Join-Path $run 'report.json')
+    if ($LASTEXITCODE -ne 0) { throw 'The trace is invalid or incomplete.' }
+    Write-Output ('Recording saved under: ' + $run)
+} finally {
+    $env:CECIL_TRACE_FILE = $previousTrace
+    $env:PATH = $previousPath
+    Pop-Location
+}
+END RECORDING COMMANDS
+
+For companions, weave each DLL separately with the same signing key and:
+  --core <matching diagnostic-or-woven core path>
+Then stage all required woven companion DLLs with the consumer. Weaving core
+alone does not automatically instrument Rocks/Pdb/Mdb.
+
+Analyzer CLI:
+  Cecil.Trace.Analysis analyze <trace.jsonl> [--output <new-report.json>]
+It returns nonzero for invalid/incomplete traces; --help is available.
+Reports also use CreateNew and are not silently overwritten.
+
+
+10. SAVED ARTIFACTS AND RESULTS
+------------------------------
+10.1 Original core baseline
+
+  <fork>\artifacts\trace-baseline\Mono.Cecil.dll
+  SHA256:
+    FAF6000D31C959C093BBAA5F97982070FE0FAA8DEB7769E13BBAF6AEB4C7F30C
+
+Verified: no recorder type and no applied weaving marker.
+
+10.2 Latest recorded calculator run
+
+  <demo>\recordings\2026-09-23
+
+  cecil\Mono.Cecil.dll
+    Woven core.
+  cecil\Mono.Cecil.dll.coverage.json
+    Static weaving coverage.
+  app\
+    Staged .NET 10 rewriter, woven dependency, runtime configuration and inputs.
+  app\input\DllExplorerSample.dll
+  app\input\DllExplorerSample.pdb
+    Preserved input copies.
+  rewritten\DllExplorerSample.dll
+    Rewritten result with embedded portable PDB.
+  calls.jsonl
+    Full raw recording; 95,795,392 bytes, approximately 95.8 MB.
+  report.json
+    Analyzer output; 865,416 bytes.
+  console.txt
+    Program output, actual loaded Cecil path/hash and verification results.
+  preview.json
+    2,960-byte formatted array of THREE actual records: method, enter, leave
+    for the greeting setter. The records were compared against the full trace.
+    This is an excerpt, NOT a standalone complete trace for the analyzer.
+
+Loaded woven core SHA256:
+  BDBBAE5FA2B27024423DBF39B3B39E9B656F4D73E5A5560487A959931FE51B62
+Loaded woven core MVID:
+  726fa145-6515-4902-acfa-20b04bffc773
+
+Original calculator SHA256:
+  67B637066BBA6A7541343DD65094066A20FBB5BBA9107EFBC0B3AA83A693FCD2
+
+Rewritten calculator SHA256, SAME with original and recorded Cecil:
+  E3F595309BC70BAAAA02B3C87C323771DF376647F73FD1CACC9F60BEC4206826
+
+Earlier unrecorded output used for comparison:
+  <demo>\bin\Debug\net10.0\rewritten\20260923-121458-8843930\DllExplorerSample.dll
+
+Recorded run:
+  Runtime:                            10.0.12
+  Threads observed:                        1
+  Calls:                              33,412
+  Internal calls:                     32,002
+  External calls:                      1,410
+  Unknown-origin calls:                    0
+  Total JSON records:                 68,396
+  Method descriptor records:           1,569
+  Final openCalls:                         0
+  Final recorderFailed:                false
+  Analyzer isComplete:                  true
+  Analyzer errors:                        []
+  Origin/reason replay-issue groups:       14
+
+Category entered/returned counts were equal; no traced calls escaped by throwing:
+                    Internal     External
+  create               2,973           73
+  read                20,081          919
+  write                4,147            9
+  resolve                161            0
+  materialize             64            0
+  emit                   629            1
+  lifetime                14            6
+  other                3,933          402
+
+External read/write ratio: 919 / 9 = approximately 102.111.
+Do not interpret this without the caller breakdown in section 6.
+
+Completed body decodes: 16
+Declared IL bytes:     145
+Decoded instructions:   71
+
+The command's measured wall time was approximately 6.43 seconds, INCLUDING
+recording overhead. No matching controlled timing baseline was measured;
+this is not a slowdown factor.
+
+Behavior checks passed:
+  Add(2,3): 5 -> 15.
+  CallCount after Add: 1 -> 1.
+  Greeting changes as intended.
+  Add's exploration-attribute count: 1 -> 0.
+  Division, caught divide-by-zero and nested doubling helper preserved.
+  Original calculator and original Cecil baseline hashes unchanged.
+  Rewritten embedded symbols reload and retain Add's sequence points.
+  Original demo build still contains uninstrumented Cecil.
+  Demo .csproj default reference remains unchanged.
+
+Reconstruction caveats actually present include constructor-initializer regions,
+preserved input files, stream adapters, missing external producers, ref storage
+locations, delegates, runtime initializers, callback re-entry and output remaps.
+Many concern internal work. "14 groups" does not mean 14 malformed events.
+
+10.3 Earlier synthetic example, still retained
+
+  <fork>\artifacts\trace-example
+
+Contains woven core plus all three companions, coverage files, workload, input
+and output assemblies, calls.jsonl and report.json.
+5,751 calls; external read 84/write 16, ratio 5.25.
+One decoded body, 10 IL bytes, 5 instructions; generated result returns 42.
+An unread body stays deferred. Log approximately 11.7 MB.
+
+Synthetic output SHA256:
+  EEBAE44C0F602474F3F0B7755B331C595148F95F172D1426E335B54C4D71FCC4
+
+These are correctness examples, NOT ILLink workload conclusions.
+The old trace-demo and trace-smoke directories were removed after inspection;
+use trace-example, not those obsolete locations.
+
+
+11. SEMANTIC ACCURACY AUDIT: WHAT WAS ACTUALLY CHECKED
+-----------------------------------------------------
+The user explicitly distinguished:
+  "Did the rewritten DLL behave correctly?"
+from:
+  "Does the log accurately describe what happened?"
+
+The first answer originally established output behavior and trace structural
+integrity, plus a greeting spot-check. That was NOT enough to claim independent
+semantic validation. A separate read-only audit was then performed.
+
+Checked against Program.RewriteCalculator and inspected original/output IL:
+  - Exact ordered sequence of all 29 direct Cecil calls in that method.
+    Correct immediate origin, null parents for those direct calls, successful
+    completions, no unexpected direct call, no missing expected direct call.
+  - Correct input path and same ReaderParameters identity, including snapshot
+    values for Deferred mode and ReadSymbols=true.
+  - Connected assembly -> module -> calculator identities through return values.
+  - Correct Add and PrintGreeting method objects through observed names.
+  - Repeated Add.Body reads return the same body; first uncached, second cached.
+  - Creation of ldc.i4 10 and add and insertion of those exact instruction
+    objects after the original add in the correct order.
+  - Correct ldstr instruction receives the new greeting, and the same value is
+    subsequently supplied to the writer's string-emission helper.
+  - Correct ExplorationAttribute removed from the SAME Add method's collection,
+    with Remove returning true.
+  - Writer flags, provider identity, assembly Write/Dispose receiver identity.
+  - FileStream explicitly marked stream-needs-adapter, not falsely reconstructible.
+  - Logged 16/145/71 decode totals match independent original-DLL inspection.
+
+Relevant actual call IDs:
+  15     external AssemblyDefinition.ReadAssembly.
+  17     internal ModuleDefinition.ReadModule, parent 15.
+  10168  create ldc.i4 10.
+  10252  create add.
+  11197  external operand setter, methodId 573, instruction object id 223,
+         argument "Hello from the Cecil-rewritten DLL".
+  13483  removal of the exploration attribute, returned true.
+  13510  assembly Write to an externally supplied FileStream.
+  47727  internal CodeWriter.WriteOperand on the same instruction 223.
+  47731  internal GetUserStringIndex with the exact new greeting, under Write.
+  68369  assembly Dispose.
+
+The greeting setter's enter/leave and descriptor are in preview.json.
+Its receiver points to sourceCallId 11164, sourcePath "result".
+
+An audit assumption was corrected rather than hidden:
+The writer does NOT call get_Operand here. CodeWriter.cs reads instruction.operand
+directly (around line 201), then supplies it to GetUserStringIndex. Therefore no
+getter event was expected. The downstream argument and emitted IL establish
+propagation of the new value, while the direct field read itself is unobserved.
+
+Conclusion:
+No mismatch was found in the checked source-level operations and data flow.
+This is stronger than balanced events or matching output alone.
+It is NOT an independent oracle for every one of the 33,412 events.
+The 40 additional demo-caller events include predicates; the 29-call exact-order
+audit specifically targets RewriteCalculator's direct calls.
+
+These semantic checks were ad hoc read-only audit commands, not a new permanent
+general-purpose audit/replay framework. Turning them into regression tests is
+reasonable future work, not something already completed.
+
+
+12. COVERAGE AND DIRECT FIELDS
+------------------------------
+Tested diagnostic netstandard2.0 method coverage:
+  Core:   3,059 instrumented out of 3,229 method declarations.
+  Rocks:    115 instrumented.
+  Pdb:      320 instrumented.
+  Mdb:      229 instrumented.
+  Total instrumented across this family: 3,723.
+
+In these tested builds, other methods are recorder methods or have no managed
+body. Other versions can expose the additional skip reasons described earlier.
+The separately tested net10.0 core has 3,048 woven methods; counts are
+target/build-specific.
+
+Measured core public/protected API, excluding diagnostics:
+  758 externally accessible property declarations.
+  1,107 executable externally accessible accessors, all instrumented.
+  58 additional accessor declarations have no managed body.
+
+Measured exposed fields in core:
+  Enum constants:                    668
+  Enum backing fields:                43
+  Other constants:                     1
+  Non-enum readonly fields:           222
+  Non-enum mutable fields:             15
+  Total:                             949
+
+Of the 222 readonly fields, 219 are opcode definitions.
+The 15 mutable fields are:
+  - Eight public ImageDebugDirectory fields.
+  - Four public static debug-format KindIdentifier GUID fields.
+  - Three protected backing fields:
+      ParameterReference.parameter_type
+      TypeReference.generic_parameters
+      VariableReference.variable_type
+
+Companion exposed fields:
+  Rocks: 0.
+  Pdb:   0.
+  Mdb:  95, including 30 non-enum mutable fields in the legacy symbol model.
+        Other Mdb groups: 12 enum constants, 4 enum backing fields,
+        14 other constants and 35 readonly fields.
+
+These counts were checked against the saved coverage manifests and binary
+metadata. "Exposed" means public/protected/protected-internal fields on
+externally visible types, not all fields and not reflection/friend access.
+
+Interpretation:
+  - The usual object model is heavily property-based and covered at API level.
+  - Constants generally compile into callers; raw field totals overstate mutable
+    application-facing state.
+  - Static opcode reads still have no separate access event. A later method
+    argument snapshot can capture the opcode value.
+  - Private/internal field reads and writes inside Cecil are not individually
+    traced either. Surrounding method calls are visible.
+  - Declaration counts are NOT access frequencies. Actual ILLink usage of the
+    exposed fields has not been measured.
+
+Changing fields to properties would change binary/API compatibility. Observing
+consumer field instructions would require a separate call-site instrumentation
+strategy, not just expanding the existing method weaver.
+
+
+13. LIMITATIONS AND MISSING FEATURES
+------------------------------------
+Observation/replay boundaries:
+  - Only woven managed method bodies are intercepted.
+  - No complete field-access, reference-copy, reference-equality or memory trace.
+  - No interception of arbitrary external array/collection/service mutations.
+  - Input files/symbols/dependencies must be preserved outside the log.
+  - Streams, delegates, external subclasses/resolvers and opaque values may need
+    explicit driver/adapters.
+  - Unsupported pointer/typed-reference/byref-like values are explicit gaps.
+  - Ref/out VALUES are captured, but their storage locations and aliases are not.
+  - Ref/out/receiver post-state after an exception is not captured.
+  - Derived constructor entry is after base/this initialization. Initializer
+    work may lack the later derived-constructor parent; failures before entry
+    have no derived entry.
+  - Runtime type initialization is not an independent consumer replay request.
+  - Global sequence is recorder-observation order, not a deterministic scheduler.
+  - Logical origin can be obscured by framework bridges or uninstrumented frames.
+  - Snapshot limits can make otherwise supported data unavailable.
+  - Analyzer temporal/reference checks are not a full reconstructed-graph proof.
+  - NativeAOT/trimming of the diagnostic reflection runtime is not supported.
+  - A process crash/kill or logging failure can leave an incomplete trace.
+
+Performance/storage:
+  - Every eligible internal call is observed.
+  - Caller stack inspection, disabled inlining, allocations/boxing, reflection
+    snapshots, synchronized JSON output and per-record flushes are expensive.
+  - Full traces are large even for tiny samples: this calculator produced 95.8 MB.
+  - No event/file-size budget, graceful budget-exhausted marker, counters-only
+    mode, external-only mode, sampling or optimized buffered output is implemented.
+  - Do not start unrestricted production-scale ILLink recording without a bounded
+    pilot, space planning and an agreed experiment scope.
+  - No measured general slowdown factor is available.
+  - Use an UNINSTRUMENTED same-source/toolchain build for timing/allocation/GC
+    baselines, not a woven-but-disabled DLL.
+
+Security/handling:
+  - Logs contain paths, metadata names, arguments, resources and option fields,
+    potentially including signing-related data. Treat them as sensitive.
+  - Do not upload traces/source to third-party services without authorization.
+  - Do not replace shared NuGet or installed SDK files for an experiment.
+  - Keep source input, original core, diagnostic unwoven core, woven core and
+    rewritten application output distinct.
+
+Functional work still missing:
+  - General reconstruction/replay driver and workload-specific adapters.
+  - Automated preserved-input/environment/dependency bundle.
+  - Logical consumer-boundary/caller-aware aggregation in the analyzer UI/report.
+  - Consumer/native/field instruction instrumentation.
+  - Bounded production recording and lower-overhead modes.
+  - Real ILLink/Blazor or macios integration, compatibility validation and baseline.
+  - Validation across different dotnet/cecil or upstream Cecil revisions.
+  - Packaging/versioned distribution/CI integration for this tooling.
+
+Do not present any item in this list as already implemented.
+
+
+14. VALIDATION ALREADY PERFORMED
+-------------------------------
+September 21 implementation validation:
+  - 9/9 new NUnit integration tests passed.
+  - Deterministic output equivalence: original, woven-disabled, woven-enabled.
+  - Generated assembly actually executes and returns 42.
+  - Lazy-body preservation and measured decode observations.
+  - Bounded instruction/collection reconstruction using snapshots and IDs.
+  - Generic/value-type/iterator/ref-out/exception paths.
+  - External callback re-entry with parent.
+  - Three worker threads and balanced ordered records.
+  - Weak-reference check: observation does not retain objects.
+  - Float bits, unusual UTF-16 strings, array aliases/cycles/lower bounds/limits.
+  - Invalid/incomplete/faulted trace rejection; overwrite/double-weave rejection.
+  - Woven companions share the recorder; portable and MDB symbol roundtrips.
+  - Later ProcessExit callbacks still record correctly.
+
+Additional existing-code validation:
+  - 82/82 existing ILProcessor/MethodBody/ByteBuffer tests passed against a final
+    separately woven net10.0 core with recording disabled.
+  - Two selected existing tests passed with recording enabled; their
+    24,793-call trace passed analysis.
+    Retained trace/report:
+      <fork>\artifacts\trace-regression\upstream-36592.jsonl
+      <fork>\artifacts\trace-regression\upstream-36592.jsonl.report.json
+    The separately staged final disabled-recording test build is under:
+      <fork>\artifacts\trace-regression-final
+  - Ordinary non-diagnostic net10.0 AOT-analyzed build passed with no warnings/errors.
+  - git diff --check passed at implementation completion.
+
+September 23 calculator validation:
+  - .NET 10 demo builds and both normal/recorded runs pass behavior checks.
+  - Original input/baseline preserved; original/recorded rewritten output hashes
+    match as listed above.
+  - Output symbols reload as EmbeddedPortablePdbReader; Add retains sequence points.
+  - CLI --help, explicit paths from another working directory, invalid argument
+    count, input/output equality and existing-output safety checks passed.
+  - The recorded run passed analyzer validation and the semantic checks in section 11.
+
+No full test suite was rerun merely to write this handoff.
+Historical passing tests do not guarantee untested workloads or future edits.
+
+
+15. PORTING TO ANOTHER CECIL VERSION AND NEXT WORK
+------------------------------------------------
+For a fresh Cecil source tree:
+  1. Identify exact fork/revision, consumer dependency and signing identity.
+  2. Preserve an ordinary unmodified baseline using that source/toolchain.
+  3. Integrate the diagnostics source and optional compile wiring into core.
+  4. Check private-field/body-observation/snapshot assumptions against that version.
+  5. Build diagnostic core; adapt and build the weaver if needed.
+  6. Weave separate supported DLLs with matching key/core identity.
+  7. Review all skipped methods, value gaps and exposed fields.
+  8. Validate symbols, signatures, output behavior, disabled/enabled tracing and
+     log semantics on bounded examples before substituting into a real consumer.
+
+The current assembly-name allow-list does not certify arbitrary versions.
+Older/newer APIs, runtime targets, metadata patterns and private field layouts
+can require adaptation. Upstream Cecil and dotnet/cecil share many names but are
+not interchangeable experimental baselines.
+
+Potential next tasks, to choose with the user:
+  - Add persistent semantic-regression assertions for the calculator recording.
+  - Define/report logical consumer operations separately from immediate-caller
+    origin, with a deliberate policy for LINQ and framework callbacks.
+  - Implement a recording budget and explicit incomplete/budget-exhausted status.
+  - Design adapters for the actual consumer's streams/resolvers/callbacks.
+  - Build a compatible isolated ILLink/Blazor experiment with preserved inputs
+    and a new uninstrumented baseline, then perform a small recording pilot.
+  - Only then scale up and use observations to form an SRM-library hypothesis.
+
+For a replay effort, start with a bounded contract rather than replaying all
+33,412 calls. Re-executing one high-level request already regenerates internal
+work, and framework callbacks/type initializers need special handling.
+
+
+16. CONTINUATION AND PRESERVATION NOTES
+--------------------------------------
+Git status in the fork when this handoff was written:
+  Modified: Mono.Cecil.csproj, README.md
+  New/untracked: Mono.Cecil.Diagnostics\, Tracing.md, tools\
+  Branch instrumentation at 9e14a6389353d0a2795e88c2025643315cb77e7a.
+  No commit/push was made.
+
+Preserve the sibling calculator project and this docs handoff separately if
+making a source backup or commit. They are not inside that Git repository.
+Generated recordings are large/sensitive artifacts, not ordinary source files.
+
+Earlier persistent checkpoint/source backup:
+  C:\Users\t-fhanzlik\.copilot\session-state\
+  c1175c7c-07f1-4c82-ab1d-1cd28fc856e9\files\
+    CecilAnalyzer-Checkpoint-2026-09-21.txt
+    CecilAnalyzer-Source-2026-09-21.zip
+
+The September 21 backup predates the September 23 calculator demo and recording;
+it is not a complete backup of today's state. September 20 paused artifacts are
+older still. Current source and the dated recording directory are authoritative.
+
+OneDrive:
+  No relocation was needed. A temporary validation directory inherited ReadOnly/
+  ReparsePoint attributes; its empty-directory cleanup succeeded with a targeted
+  Remove-Item -Force. Do not broadly delete/move OneDrive folders to "fix" this.
+
+User interaction:
+  - The user is learning the code, not asking to replace it with a black box.
+  - Explain compilation, weaving, runtime activation and offline analysis as
+    distinct stages.
+  - Show actual recorded evidence when making semantic-accuracy claims.
+  - Distinguish output correctness, trace structural validity, semantic coverage
+    and general replayability. None alone establishes all the others.
+  - Do not silently turn explanatory questions into unrelated implementation work.
+  - Do not commit, push, replace shared dependencies or run large real workloads
+    without the user's direction.
+
+END OF HANDOFF

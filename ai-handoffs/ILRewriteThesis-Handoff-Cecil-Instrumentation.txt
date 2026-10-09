@@ -1,0 +1,596 @@
+IL REWRITE THESIS - CECIL INSTRUMENTATION AND CONSUMER DEPENDENCIES
+Updated: 2026-09-20
+================================================================
+
+Purpose and reading order
+-------------------------
+Continuation of ILRewriteThesis-Handoff-ILLink-Profiling.txt (2026-09-17).
+Covers the September 18-20 discussion: use-case inventory, dependency provenance,
+experimental scope, and preparation for a counting/instrumented dotnet/cecil fork.
+
+Read THIS FILE FIRST for the immediate next task. Read the profiling handoff for
+the existing workload commands, PerfView evidence, and earlier open questions.
+Earlier context remains in:
+  ILRewriteThesis-Handoff.txt
+  ILRewriteThesis-Handoff-Supplement.txt
+  ILRewriteThesis-Handoff-Cecil-to-SRM.txt
+  ILRewriteThesis-Handoff-SRM.txt
+  ILRewriteThesis-Handoff-ILLink-Profiling.txt
+  SRM-Cheatsheet.md
+
+This is a context handoff, not permission to publish code, create a GitHub fork,
+modify an arbitrary checkout, or replace installed SDK/NuGet binaries. Follow the
+next user request. The user wants a smooth transition into implementing the fork.
+Keep demonstrated work separate from recommendations and untested assumptions.
+
+1. Immediate direction and actual implementation state
+-------------------------------------------------------
+The user wants to start with an instrumented/counting fork of dotnet/cecil,
+driven by real ILLink workloads, rather than first implementing a new SRM library
+or porting every possible consumer. The user also wants the same instrumentation
+to be reusable for dotnet/macios later.
+
+Near-term purpose:
+  Understand actual reading/materialization, reuse, mutation, and output behavior;
+  connect that behavior to allocations and time; then form a concrete optimization
+  hypothesis. Initially change observability, NOT Cecil's representation or the
+  consumer's trimming logic.
+
+Long-term purpose:
+  Evidence-based design of a reusable, efficient SRM-backed IL/metadata rewriting
+  library, within a bounded thesis scope and with room for later expansion.
+
+Confirmed work in this conversation:
+- Read public project/build sources and dependency/source manifests.
+- Populated the user's use-case workbook (section 8).
+- Reviewed the linked broad use-case gist (section 9).
+- Explained the fork/clone workflow and provided commands.
+- Wrote this handoff.
+
+NOT performed or confirmed:
+- No GitHub fork was created by the assistant.
+- No local Cecil clone, instrumentation branch, modified Cecil build, package
+  substitution, counters, recorder, or replay harness was implemented here.
+- No new performance measurements or optimizations were performed.
+- No macios/Android production workload was run.
+- User may have done work independently; ask/inspect rather than assuming a clean
+  starting machine. Their fork URL and local checkout path are not known.
+
+2. CRITICAL: do not mix the existing profiling baseline with latest main
+-----------------------------------------------------------------------
+The PRIOR profiling handoff records actual workloads using:
+  Microsoft.NET.ILLink.Tasks 10.0.12
+  C:\Users\t-fhanzlik\.nuget\packages\microsoft.net.illink.tasks\10.0.12\tools\net\illink.dll
+
+The shared Cecil source revision discovered in THIS discussion was traced from
+the public runtime/macios MAIN dependency manifests fetched during this session.
+It has NOT been established as the Cecil revision inside ILLink.Tasks 10.0.12.
+
+This must be resolved before implementing/integrating the fork:
+- If continuing the old 10.0.12 experiments, identify that tool's actual Cecil
+  package/binary/source provenance first.
+- If moving to newer pinned ILLink source, build/capture a compatible workload and
+  establish a NEW uninstrumented baseline. Do not treat the old sampled numbers as
+  an apples-to-apples comparison with the new toolchain.
+
+A matching package name or AssemblyVersion is not sufficient proof of exact code.
+The original dependency version property must be resolved through imports/assets;
+a manifest describes provenance, while the actual loaded binary determines the
+experiment. Source main branches and installed SDKs are separate things.
+
+3. Cecil implementations: what each consumer actually depends on
+----------------------------------------------------------------
+A. ILLink in dotnet/runtime
+Project:
+  https://github.com/dotnet/runtime/blob/main/src/tools/illink/src/linker/Mono.Linker.csproj
+Fetched reference:
+  <PackageReference Include="Microsoft.DotNet.Cecil"
+                    Version="$(MicrosoftDotNetCecilVersion)" Publish="True" />
+
+B. macios assembly-preparer and dotnet-linker
+Projects:
+  https://github.com/dotnet/macios/blob/main/tools/assembly-preparer/assembly-preparer.csproj
+  https://github.com/dotnet/macios/blob/main/tools/dotnet-linker/dotnet-linker.csproj
+Both reference Microsoft.DotNet.Cecil, using MicrosoftDotNetCecilPackageVersion.
+The dotnet-linker project also references Microsoft.NET.ILLink.
+Assembly-preparer targets net$(BundledNETCoreAppTargetFrameworkVersion) and
+netstandard2.0 outside design-time builds in the inspected source.
+
+Important distinction:
+  Original upstream repository: https://github.com/jbevain/cecil
+  Original NuGet package: Mono.Cecil
+  .NET-maintained fork: https://github.com/dotnet/cecil
+  .NET package: Microsoft.DotNet.Cecil
+
+The .NET fork README explicitly calls it a fork of upstream Cecil.
+It still uses Mono.Cecil namespaces, Mono.Cecil.csproj, and the Cecil object model.
+"using Mono.Cecil;" alone DOES NOT identify which package is used.
+Microsoft.DotNet.Cecil is NOT an SRM-based rewrite of Cecil.
+
+C. Whole-assembly ILStrip/AssemblyStripper in runtime
+  ILStrip.cs is compiled by:
+  https://github.com/dotnet/runtime/blob/main/src/tasks/MonoTargetsTasks/MonoTargetsTasks.csproj
+  That project references:
+  https://github.com/dotnet/runtime/blob/main/src/tasks/AssemblyStripper/AssemblyStripper.csproj
+  That project references:
+    Microsoft.DotNet.CilStrip.Sources
+    Version="$(MicrosoftDotNetCilStripSourcesVersion)"
+
+This supplies legacy Cecil SOURCE, compiled into AssemblyStripper, using the
+CilStrip.Mono.Cecil namespace. It is neither a normal Mono.Cecil package reference
+nor the modern Microsoft.DotNet.Cecil integration.
+
+ILStrip.Execute selects:
+- TrimIndividualMethods=false: AssemblyStripper.TryStripAssembly, legacy Cecil.
+- TrimIndividualMethods=true: TrimMethods, SRM plus direct PE body patching.
+The second path does not become a Cecil workload just because the containing task
+also has legacy Cecil using directives.
+
+This is a THIRD integration case for instrumentation, not a drop-in use of the
+modern counting fork. Do not choose it first merely because stripping sounds small.
+Also do not confuse it with ILTrim.Core or third-party BrokenEvent.ILStrip.
+
+D. Android
+Inspected Android task/helper sources use Mono.Cecil APIs. The user's initial
+workbook specified "Mono.Cecil: 0.11.6" for MarshalMethodsAssemblyRewriter.
+That exact package/version was NOT independently traced here. Preserve it as
+user-provided/unverified, not as established current-repository configuration.
+
+4. Runtime and macios share a Cecil source revision in inspected dependencies
+----------------------------------------------------------------------------
+Fetched runtime main dependency:
+  Microsoft.DotNet.Cecil 0.11.5-preview.26463.105
+  Build repository: https://github.com/dotnet/dotnet
+  Build SHA: 9da2930951f4498751b02ecf8546f6bde759ef9d
+
+Fetched macios main dependency:
+  Microsoft.DotNet.Cecil 0.11.5-preview.26465.108
+  Build repository: https://github.com/dotnet/dotnet
+  Build SHA: e5abd3f0528a8467c64a855a6ff569566d0daf27
+
+Dependency manifests:
+  https://github.com/dotnet/runtime/blob/main/eng/Version.Details.xml
+  https://github.com/dotnet/macios/blob/main/eng/Version.Details.xml
+
+Corresponding PINNED unified-build source manifests:
+  https://github.com/dotnet/dotnet/blob/9da2930951f4498751b02ecf8546f6bde759ef9d/src/source-manifest.json
+  https://github.com/dotnet/dotnet/blob/e5abd3f0528a8467c64a855a6ff569566d0daf27/src/source-manifest.json
+
+BOTH contain:
+  "path": "cecil",
+  "remoteUri": "https://github.com/dotnet/cecil",
+  "commitSha": "9e14a6389353d0a2795e88c2025643315cb77e7a"
+Both also list Cecil barId 329764.
+
+Exact Cecil source:
+  https://github.com/dotnet/cecil/tree/9e14a6389353d0a2795e88c2025643315cb77e7a
+
+Conclusion:
+  One source fork and instrumentation implementation is a sensible common base
+  for those consumer snapshots. Different package suffixes do not necessarily mean
+  different Cecil source code.
+
+Limits:
+- We followed the manifests; we did not compare package binaries, build outputs,
+  build configurations, or all unified-repository patches.
+- One fork does NOT automatically imply one binary can be copied unchanged into
+  both environments. TFMs, assembly identity/signing, companion assemblies, package
+  resolution, and the actual process loading context still matter.
+- Re-check the user's selected revisions; the manifest URLs on main can advance.
+- Runtime main fetched in this session carried newer product branding than the
+  installed learning workload. Do not infer SDK compatibility from this handoff.
+- No exact top-level runtime/macios main HEAD SHA was recorded here. The unified
+  source manifests and Cecil SHA above are pinned, unlike those main URLs.
+
+5. How to identify the correct commit and set up the fork
+--------------------------------------------------------
+Do NOT pick the latest Cecil commit just because it is newest.
+
+Trace:
+  chosen consumer checkout/release
+    -> project PackageReference
+    -> resolved version properties and eng/Version.Details.xml
+    -> dependency repository URI + SHA
+    -> if dotnet/dotnet: src/source-manifest.json at THAT SHA
+    -> entry path "cecil": remoteUri + commitSha
+
+If the dependency URI is directly dotnet/cecil, its SHA already identifies Cecil.
+If working from an installed tool rather than a source checkout, first identify
+the installed package/build provenance (e.g. dependency metadata and available
+package repository/Source Link information). Do not substitute an unrelated main.
+
+Observed naming nuance:
+- Runtime Mono.Linker.csproj used MicrosoftDotNetCecilVersion.
+- Fetched runtime eng/Version.Details.props defined
+  MicrosoftDotNetCecilPackageVersion.
+- Their complete evaluated alias/import chain was not resolved in this session.
+  Do that in the chosen checkout rather than editing a guessed version property.
+
+User asked "clone or fork?"
+Recommendation: fork dotnet/cecil on GitHub, THEN clone that fork locally.
+- Fork = own hosted repository for preserving/pushing instrumentation.
+- Clone = local working copy.
+- Local-only experiments can clone upstream without a GitHub fork.
+
+Illustrative commands already provided (NOT executed):
+  git clone https://github.com/YOUR_USERNAME/cecil.git
+  Set-Location cecil
+  git remote add upstream https://github.com/dotnet/cecil.git
+  git fetch upstream
+  git switch -c instrumentation 9e14a6389353d0a2795e88c2025643315cb77e7a
+  git push -u origin instrumentation
+
+That SHA is conditional on choosing the corresponding newer consumer baseline.
+Use the actual user's fork URL and a suitable short local path, not a placeholder.
+Keep instrumentation commits separate from upstream updates. Do not overwrite a
+dirty checkout or automatically upgrade the experimental baseline.
+No actual clone path, fork URL, push, build command, or packaging procedure is
+confirmed. Inspect the chosen Cecil build docs/configuration before deciding how
+to build and package it; do not assume plain dotnet build is sufficient.
+
+6. Analysis plan: bounded, evidence-first, reusable instrumentation
+-----------------------------------------------------------------
+User's concern:
+  Many consumers make it hard to determine an expected mix of reads and writes.
+  The hypothesis is a tradeoff between cheap access and cheap mutation. User also
+  suggested behavior might be selected dynamically.
+
+Resolution:
+  Do not seek one universal read/write ratio. Characterize workload shapes and
+  determine the conditions under which alternative representations win.
+
+Useful workload families (classification, NOT measured performance rankings):
+- Extensive analysis + selective mutation: ILLink.
+- Scanning + small edits: resource/attribute cleanup.
+- Multiple passes reusing state: macios assembly-preparer.
+- Substantial body/member generation: Android marshal wrappers or MAUI XamlC.
+
+Initial focus:
+  One ILLink workload family is enough to start. Add one targeted-rewrite pipeline
+  later for contrast. Do not integrate the entire inventory first.
+  ILLink has broad deployment and large graphs; XamlC is interesting for developer
+  build latency. Neither establishes that Cecil dominates their total runtime.
+
+Suggested first research question:
+  For selected ILLink workloads, how much time/memory is spent materializing and
+  retaining method bodies, how often are they revisited, and how many are modified?
+
+Read/write call counts alone are insufficient:
+- First decode versus repeated cached reads.
+- Sequential scan versus random access/control-flow work.
+- One-operand edit versus full-body replacement.
+- Removal before any body read versus removal after analysis.
+- Few edited methods spread across many assemblies versus dense local edits.
+- Retention across passes versus short-lived temporary representations.
+- A small edit can still force substantial serialization.
+
+Suggested staged measurements:
+1. Uninstrumented baseline:
+   End-to-end elapsed time, CPU, allocation/GC, peak/retained memory, variability.
+   Profile before deciding what counters are worth adding.
+2. Materialization:
+   Body decode events, distinct decoded bodies, decoded IL bytes, instruction
+   creation from decoding versus generated instructions, method metadata activity.
+3. Reuse:
+   Cached body accesses and repeated analysis/pass visits where observable.
+   A Body getter call does not prove full instruction enumeration.
+4. Mutation:
+   Bodies modified/replaced/added/removed, and decoded-but-unmodified bodies.
+5. Resolution/output:
+   Resolver requests/cache behavior; raw versus decoded writer paths if relevant;
+   assembly write/copy behavior and phase costs.
+
+These counters are a proposed progression, not all mandatory in milestone one.
+Decoded-but-unmodified is not synonymous with unnecessary analysis.
+
+Instrumentation correctness/overhead:
+- Start at meaningful boundaries, not a timer/log record in every tiny getter.
+- Prefer aggregated counters; separate diagnostic runs from timing baselines.
+- Logging names/ToString/object contents can itself trigger lazy reads.
+- Record stable identifiers without forcing extra materialization.
+- Tokens are module-scoped; added entities may not yet have output tokens.
+- Distinguish event counts from distinct bodies, and materialized from generated
+  objects. Define each metric precisely before naming it.
+- Avoid a global per-instruction contended counter; instrument at coarser points
+  or aggregate appropriately if concurrency is present.
+- Inclusive timings overlap; do not sum them as independent phase costs.
+- Managed allocated bytes, retained heap, peak working set, and GC pause/CPU are
+  different measurements.
+- Do not keep strong references to every observed object merely for counters:
+  that can change lifetimes and invalidate memory conclusions.
+
+Mutation/phase tracking limitations:
+- Collection add/remove hooks miss changes to Instruction.Operand/OpCode, locals,
+  EH boundaries, references, flags, and replacement of an entire body.
+- Cecil does not inherently know which ILLink phase is executing.
+- Existing linker events or optional small diagnostic ILLink hooks may be needed.
+  These would be instrumentation only, not a change to trimming logic.
+- The earlier preference was to leave ILLink unchanged; do not silently broaden
+  scope to modifying ILLink. Try Cecil-only observation first and explain gaps.
+- Baseline comparison/snapshots can also materialize otherwise unread state.
+  Do not claim exact comprehensive mutation counts until all mutation paths are
+  covered and the observation strategy is shown not to alter the workload.
+
+Replay:
+- A bounded recording/replay harness may isolate a measured hotspot later.
+- It is NOT the first milestone and need not reproduce every Cecil API.
+- Capture external/logical requests, not recursively replay all internal calls.
+- Match semantic work rather than forcing a new library to expose Cecil objects.
+- Replay changes application allocations/object lifetimes and cannot establish
+  the same end-to-end speedup as a real ILLink integration.
+
+Possible first deliverable:
+  Reproducible report for selected workloads: actual dependency/revisions,
+  materialized bodies/IL/instructions, identified allocation/time hotspots,
+  and cautiously defined reuse/mutation coverage.
+
+7. Adaptive representation remains a hypothesis, not implementation scope
+------------------------------------------------------------------------
+Discussed possibility:
+  raw body -> lightweight decoding for analysis -> editable representation
+
+Compare eventually:
+- Streaming/compact: less retained state, potentially repeated decoding.
+- Cached editable bodies: higher allocation, cheaper revisits and mutation.
+- Adaptive promotion: start lightweight and materialize when beneficial/required.
+
+Mutation is not the only reason to materialize: repeated analysis, CFG building,
+and random access can justify richer cached state.
+Automatic promotion has conversion/bookkeeping costs. An explicit per-body/pass
+policy might be simpler. No switching threshold or API has been selected.
+Unmodified IL can still require token remapping after metadata changes.
+Analysis must see effective edits before final emission; keep the earlier
+original/current/editor-local view discussion as architectural context only.
+
+8. Use-case workbook: actual artifact and contents
+-------------------------------------------------
+User supplied and asked to populate:
+  C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite\Analysis\use cases.xlsx
+
+Assistant successfully updated it IN PLACE using openpyxl.
+- Sheet1, original headers at B3:G3; original table named Table1.
+- Seven grouped use cases now occupy B4:I10; Table1 expanded to B3:I10.
+- Existing columns preserved:
+    Project name, Files, Cecil Dependency, Description, DLL edit type, Source
+- Added:
+    Why useful, Dependencies / relationships
+- Group order: four Android entries, two macios entries, one runtime entry.
+- Wrapped cells, estimated row heights, freeze panes D4.
+- Source URLs/comments and explicit dependency uncertainty included.
+- Mono.Cecil 0.11.6 kept as original user data, not asserted as verified.
+- Later discoveries have NOT been written back to the workbook.
+
+The seven entries:
+1. Android MarshalMethodsAssemblyRewriter.cs:
+   connector/delegate removal, native callback wrappers, method bodies, UCO.
+2. Android PostTrimmingPipeline.cs + AssemblyModifierPipeline.cs:
+   related pipeline infrastructure; ordered passes and conditional persistence.
+3. Android FixLegacyResourceDesignerStep.cs, FixAbstractMethodsStep.cs,
+   AddKeepAlivesHelper.cs: targeted resource, stub, lifetime edits.
+4. Android GenerateJavaStubs.cs, JavaTypeScanner, FindJavaObjectsStep.cs,
+   FindTypeMapObjectsStep.cs: scanning workload (not a claim that containing tasks
+   are entirely read-only). JavaTypeScanner source URL was not supplied.
+5. macios tools/assembly-preparer + PrepareAssemblies.cs:
+   pre/post-trim analysis, generated-code optimization, registrar and attributes.
+6. macios InlineDlfcnMethodsStep.cs, InlineClassGetHandleStep.cs,
+   tools/linker/OptimizeGeneratedCode.cs: pattern scans and targeted/generated IL.
+7. runtime ILStrip.cs + AssemblyStripper.cs:
+   legacy whole-assembly stripping versus SRM selective body patching.
+
+Original workbook backup:
+  C:\Users\t-fhanzlik\.copilot\session-state\7a8cf6db-f1d2-46b2-bbed-440cb0acf8f5\files\use cases.original.xlsx
+Editing script:
+  C:\Users\t-fhanzlik\.copilot\session-state\7a8cf6db-f1d2-46b2-bbed-440cb0acf8f5\files\populate_use_cases.py
+
+Do NOT blindly rerun that script: it writes the original seven-row snapshot and
+could overwrite subsequent user edits or newer dependency information.
+Python openpyxl was installed during the task. No formulas were introduced.
+
+9. Broad use-case gist: useful inventory, not an executable research plan
+------------------------------------------------------------------------
+User-provided:
+  https://gist.github.com/simonrozsival/7eb5e14a2d306b737d4b063266206447
+Title: IL Rewrite: current use-case inventory.
+Reviewed full fetched text, including detailed case studies and implementation
+progression. Individual linked source claims were NOT all independently audited.
+
+Scope includes:
+- runtime ILLink mutations, substitutions/feature specialization, ILStrip,
+  ILTrim.Core, WebCIL, ReadyToRun, Hot Reload, profiler/ReJIT, round-trip tests.
+- Android mutations, persistence pipelines, SRM JNI rewriting, adjacent writers.
+- macios optimizers, registrar generation, output, external stripping, ILRepack.
+- MAUI XamlC/member generation, reference retargeting, merging/signing.
+- MAUI Labs runtime deltas.
+- Roslyn fixed-width visibility patching, Arcade PE/version/signing utilities,
+  symbol converters, and historical Mono precedents.
+
+Assessment:
+- Strong capability/requirements inventory: metadata repair, EH/branches, token
+  stability, resources, PDBs, identity/signing and output policies.
+- Good distinction between pipeline infrastructure and individual transforms.
+- Existing SRM implementations worth studying before reinventing a serializer:
+  ILTrim.Core and Android JniRemapping/AssemblyRebuilder.
+- Not a mandate to implement everything for the thesis.
+- Resource/attribute deletion is semantically small, but a correct pass-through
+  PE rebuild is still substantial work.
+- Read-only analysis is explicitly excluded from the gist's primary scope, but
+  MUST remain in the performance investigation.
+- Distinguish host/pipeline, transformation, concrete input/configuration workload,
+  and exact dependency. Many rows are not independent end-to-end consumers.
+- "Implemented/tested" is not necessarily production-wired. The gist itself says
+  no production MSBuild invocation was found for RewriteJniNamesForR8.
+- Many links use main despite listed approximate revisions; pin sources when
+  turning this into experimental evidence.
+- Negative findings and performance importance in the gist are not independently
+  established by this conversation.
+
+Important source-backed correction: AddKeepAlivesHelper
+  https://github.com/dotnet/android/blob/main/src/Xamarin.Android.Build.Tasks/Linker/MonoDroid.Tuner/AddKeepAlivesHelper.cs
+- The helper skips assemblies built against .NET for Android, whose keep-alives
+  are already compiled in. Modern sample apps can produce NO edits in this step.
+- It operates on eligible Java-derived types/registered methods, skips value-type
+  and System.String parameters, and checks near the end for existing KeepAlive.
+- It chooses the last instruction, or the preceding endfinally, for insertion.
+- It is not a general "insert before every exit" control-flow analysis.
+- The gist's illustrative EH rewrite is not an exact description of that rule.
+- Suitable legacy binding inputs are needed to exercise the real mutation path.
+This is a concrete example of why benchmark inputs/configuration matter more than
+merely identifying a source file.
+
+10. Android and macios ownership/wiring findings
+-----------------------------------------------
+Android:
+  https://github.com/dotnet/android/blob/main/src/Xamarin.Android.Build.Tasks/Tasks/PostTrimmingPipeline.cs
+  https://github.com/dotnet/android/blob/main/src/Xamarin.Android.Build.Tasks/Tasks/AssemblyModifierPipeline.cs
+
+Both independently derive AndroidTask. Neither inherits from/calls the other.
+They share IAssemblyModifierPipelineStep and StepContext.
+
+PostTrimmingPipeline:
+- Preloads assemblies via DirectoryAssemblyResolver with ReadWrite=true.
+- Executes obsolete-preserve check, embedded-library stripping, optional resource
+  designer removal, abstract-method fixes, optional keep-alives.
+- Writes modified assemblies in place, with symbol/deterministic-MVID handling.
+- Inner RID build: after ILLink, before ReadyToRun/crossgen2.
+
+AssemblyModifierPipeline:
+- Uses AssemblyPipeline and architecture-specific resolver/context state.
+- FindJavaObjectsStep -> SaveChangedAssemblyStep -> FindTypeMapObjectsStep.
+- Serializes changed assemblies; copies unchanged inputs to destinations.
+- Type-map discovery follows saving because saving can change MVID.
+- LinkAssembliesNoShrink derives from it, adds steps, then calls base.BuildPipeline.
+
+Inspected build wiring:
+  src/Xamarin.Android.Build.Tasks/Microsoft.Android.Sdk/targets/Microsoft.Android.Sdk.TypeMap.LlvmIr.targets
+    _PostTrimmingPipeline AfterTargets="ILLink", PublishTrimmed=true.
+  src/Xamarin.Android.Build.Tasks/Xamarin.Android.Common.targets
+    _RunAfterILLinkAdditionalSteps invokes AssemblyModifierPipeline for trimmed
+    builds when AndroidTypeMapImplementation != trimmable.
+    Marshal-method mode uses linked inputs as destinations; otherwise afterlink.
+    _LinkAssembliesNoShrink handles PublishTrimmed != true.
+  src/Xamarin.Android.Build.Tasks/Microsoft.Android.Sdk/targets/Microsoft.Android.Sdk.BuildOrder.targets
+    Later preparation includes _LinkAssemblies -> _AfterILLinkAdditionalSteps.
+
+Do not present the two-stage trimmed sequence as universal to all typemap modes.
+PublishTrimmed and AndroidTypeMapImplementation=trimmable are different switches.
+Count these as related stages of one toolchain, not independent product consumers.
+
+macios:
+  tools/linker has no .csproj of its own in the inspected directory.
+  Its source files are explicitly linked into other projects, including:
+    tools/dotnet-linker/dotnet-linker.csproj
+    tools/assembly-preparer/assembly-preparer.csproj
+  Both compile tools/linker/OptimizeGeneratedCode.cs via Compile Include.
+  This is source sharing, NOT a reference to a separate tools/linker DLL.
+  Assembly-preparer also explicitly includes InlineDlfcnMethodsStep.cs and
+  InlineClassGetHandleStep.cs from tools/dotnet-linker/Steps.
+  The workbook's initial relationship notes were cautious; later project reads
+  established this concrete shared-source relationship.
+
+11. Existing workload assets and evidence to carry forward
+----------------------------------------------------------
+Refer to the prior profiling handoff for full commands and measurement caveats.
+Do not claim these paths or results were freshly inspected during this handoff.
+
+User-created console workload:
+  C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite\docs\learning-exploring\TrimDemo
+Assistant-created Blazor workload:
+  C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout\Scratchpad\BlazorTrimDemo
+  Includes publish.binlog, linker.rsp, extracted tool/command files and Profiling-Guide.txt.
+
+Previous successful direct replay used ILLink.Tasks 10.0.12. Blazor SDK/replay
+outputs contained 35 DLLs with matching hashes. Browser execution was not tested.
+Console used --trim-mode link --action link; Blazor used --trim-mode link --action copy.
+Do not flatten these into an experiment differing only in application size.
+Response files reference absolute NuGet and relative build paths; they are not
+portable repro bundles. Preserve/re-capture dependencies, symbols and descriptors.
+
+Earlier user-supplied PerfView observations (not fresh independent measurements):
+- Blazor estimated cumulative allocation: 492,617,900 bytes, coarse sampling.
+- Instruction objects + arrays: 80,033,184 bytes, about 16.2% of allocation.
+- About 98.5% of sampled Instruction allocation followed a grouped get_Body path.
+- Default-interface analysis, monitor CPU and GC appeared in CPU samples.
+- None establishes actual monitor contention, exact Cecil-only ownership,
+  unnecessary decoding, or an achievable percentage speedup.
+- Exact source revision of the installed Cecil remained unresolved.
+
+The most useful next step is not another inventory of every repository: identify
+the baseline and integrate a minimal counting fork into one reproducible run.
+
+12. Proposed next-session implementation sequence
+--------------------------------------------------
+This is a recommended plan, not work already completed.
+
+1. Establish current local state:
+   User's fork/clone path, git status, remotes, selected revision, available SDK,
+   existing ILLink checkout/build and intended baseline (10.0.12 or newer).
+   Never reset/delete user changes.
+
+2. Pin the dependency accurately:
+   Follow section 5 for the chosen consumer. Use 9e14a638... only when appropriate.
+   Save the consumer revision, Cecil revision, package/build identity, configuration
+   and workload command with the experiment results.
+
+3. Build an UNINSTRUMENTED replacement first:
+   Learn existing Cecil build/package conventions and keep the public API and
+   assembly identity compatible. Integrate in a dedicated experimental tool
+   directory/feed/build, not by overwriting shared installed package caches.
+   Establish that unchanged logic and expected outputs still work before counters.
+   Determine actual loaded Cecil path/build fingerprint, not only restore success.
+
+4. Add the smallest useful instrumentation:
+   Suggested initial scope: body decoding count, decoded IL bytes, decoded
+   instruction count, and body-access/cache metrics with exact definitions.
+   Inspect the selected revision's MethodDefinition.Body and CodeReader paths.
+   Distinguish existing-body decode from generated/replaced bodies.
+   Make a bounded end-of-run report possible without per-instruction log output.
+   The activation/reporting mechanism is NOT yet designed.
+
+5. Exercise tiny known cases plus real captured ILLink:
+   Use cases that access a body twice, never access another body, and create/replace
+   a body to distinguish counter categories; follow the repository's test patterns.
+   Then run one existing workload with fixed inputs and the intended loaded fork.
+   Compare outputs and account for determinism/MVID/PDB/signing policies.
+
+6. Separate experiments:
+   Uninstrumented timing/allocation baseline; instrumented behavioral diagnostics.
+   Measure instrumentation overhead explicitly before using diagnostic timings.
+   Reuse the same counter implementation for macios only after ILLink integration
+   is understood. Separate package deployment and per-process reporting from core
+   counters so consumer-specific plumbing does not infect instrumentation.
+
+7. Extend only for unresolved questions:
+   Mutation tracking, pass correlation, resolver costs or a bounded replay.
+   Do not build universal logging, adaptive representations, or the new SRM library
+   as prerequisites to the first counting results.
+
+13. Small standalone C# question covered in this conversation
+-------------------------------------------------------------
+List<T> can expose its current Count elements as a Span<T> via
+System.Runtime.InteropServices.CollectionsMarshal.AsSpan(list), available .NET 5+.
+Obtaining it is O(1), no allocation/copy. Ref iteration can modify elements in place,
+especially useful for structs. Ordinary iteration gains depend on the workload/JIT.
+Do not structurally modify the list or change capacity while using the span;
+reallocation can leave it pointing at the old backing array. Existing-element
+reads/replacements are different from structural edits.
+This was explanation only, not a chosen optimization for Cecil.
+
+14. Guidance for the next assistant
+-----------------------------------
+- Start with the user's implementation request and current files, not with a new
+  broad research tour or an assumption that all proposed setup is already done.
+- The user has strong C# background but is still learning this tooling. Explain
+  unfamiliar build/profiling steps concretely and distinguish reading from writing.
+- Reuse the evidence already gathered, while respecting version boundaries.
+- The single most important correction to carry forward is:
+    SAME CECIL REVISION FOR INSPECTED MAIN DEPENDENCIES DOES NOT IDENTIFY THE CECIL
+    REVISION OF THE EXISTING ILLINK.TASKS 10.0.12 PROFILING BASELINE.
+- A single counting source fork for ILLink and macios is well motivated; one
+  universally drop-in compiled artifact has not been established.
+- Do not claim "Cecil is slow" universally. Existing observations justify targeted
+  questions, not a performance verdict or a predetermined replacement architecture.
+- Keep workload inputs, traces/binlogs, and private project material private.
+- Nothing in the broad gist requires expanding the thesis to all PDB formats,
+  signing, merging, registrar generation, or runtime Hot Reload.
+
+End of handoff.

@@ -1,0 +1,278 @@
+IL REWRITE THESIS - CECIL TO SRM HANDOFF
+Updated: 2026-09-15
+=====================================
+
+Purpose and reading order
+-------------------------
+Read alongside:
+1. ILRewriteThesis-Handoff.txt
+2. ILRewriteThesis-Handoff-Supplement.txt
+3. This file, which updates the learning position and subsequent discussion.
+
+The user now wants to start learning System.Reflection.Metadata (SRM).
+The earlier supplement's suggestion to start Cecil is superseded.
+This handoff is context, NOT authorization to implement the thesis, install
+tools, modify the user's project, or finalize the public API.
+
+IMPORTANT: A topic being explained is not evidence the user understands or can
+implement it. Distinguish demonstrated familiarity, conceptual exposure, and
+unperformed exercises. The user explicitly requested this distinction.
+
+1. Ambitions and unresolved requirements
+---------------------------------------
+- Build an SRM-based, reusable IL/metadata rewriting foundation.
+- Implement a useful subset for a bachelor thesis while leaving room for later
+  expansion toward broad Mono.Cecil-like functionality.
+- The team will participate in interface design. No API is finalized.
+- Drop-in Cecil API compatibility is not an established requirement.
+- Correctness is necessary but insufficient: real performance gains must justify
+  the project. The user is appropriately skeptical that basic collection edits
+  are inefficient enough to justify a replacement.
+- The user reports that a large target DLL will be at most about 20-30 MB.
+  This is a reported workload constraint, not a measured corpus.
+- The user additionally reports that the team wants thread safety so changes can
+  be made in parallel, alongside addressing older compatibility problems.
+  Which operations must be concurrent is NOT yet specified.
+- Exact stripping implementation, dependency graph, transformation rules,
+  supported formats, symbol/signing requirements, and benchmark inputs remain
+  unidentified. Do not confuse ILStrip with runtime's ILTrim.Core.
+
+The user asked whether SRM means less code than Cecil. Answer: it supplies much
+of the low-level PE/metadata reading and emission infrastructure, but not an
+editing model, automatic arbitrary copier, resolver, concurrency architecture,
+complete remapping orchestration, or transformation-safety policy. No reliable
+implementation-size estimate is established.
+
+2. What the user has actually done or demonstrated
+-------------------------------------------------
+- Previously read an introductory .NET metadata article and reported completing
+  DLL basics; compiled the sample and inspected it in ILSpy.
+- During this phase, pasted and examined Cecil source for AssemblyDefinition,
+  AssemblyNameDefinition, ModuleDefinition, TypeDefinition, and helper classes.
+- Asked focused questions about inherited identity properties, metadata tokens,
+  the role of ModuleDefinition, static partial Mixin helpers, collection hooks,
+  lazy collections, and source-code size versus object memory usage.
+- Articulated the useful model that Cecil reads and edits through the same
+  surface, with some helpers, while the caller must avoid invalid changes.
+- Asked why removing an attribute application from one method does not remove
+  applications on other methods.
+- Requested and received a copyable Markdown Cecil API cheat sheet in chat.
+  It was NOT saved as a standalone file.
+
+Evidence limits:
+- No Cecil exploration project path, installed package version, successful Cecil
+  program output, rewritten DLL, or executed modified method was supplied.
+- A Cecil snippet for removing an attribute was provided, but successful
+  execution was NOT confirmed.
+- Instruction enumeration and changing Twice to multiply by three were proposed,
+  not demonstrated as completed.
+- Do not assume Resolve/ImportReference, generic signatures, IL stack rules,
+  exception-handler editing, or concurrency are operational skills.
+- SRM hands-on learning has NOT started. No SRM reading or emission program has
+  been written in this phase.
+- No profiling fork, benchmark harness, or thesis implementation was created.
+
+3. Cecil concepts explained (exposure, not mastery)
+--------------------------------------------------
+Object hierarchy:
+  AssemblyDefinition -> ModuleDefinition -> TypeDefinition
+    -> methods, fields, properties, events, nested types, attributes
+    -> MethodDefinition.Body -> instructions, locals, exception handlers.
+
+Specific concepts covered:
+- Assembly identity properties are inherited by AssemblyNameDefinition from
+  AssemblyNameReference.
+- A module is not a referenced assembly. MainModule is the normal starting point
+  for the sample. module.Types is top-level only; GetTypes() includes nested types.
+- Metadata tokens identify table/row pairs within a module, not byte addresses
+  or globally unique identities. They can be reassigned during rewriting.
+  Newly constructed definitions need not have an assigned output row yet.
+- TypeDefinition aggregates relationships across many metadata tables; it is not
+  a literal representation of the six TypeDef columns.
+- Numerous IsPublic/IsAbstract/etc. properties inspect one flags field rather
+  than storing individual Boolean fields.
+- Deferred property access can materialize objects and cache them. HasMethods
+  can inspect a stored ownership range without creating MethodDefinition objects.
+- Mixin is an internal static partial helper class, with ordinary static helpers
+  and extension methods; it is not a special C# or metadata concept.
+- Collection hooks such as OnAdd/OnRemove are overridable methods called during
+  collection operations, not events. Specialized collections maintain ownership.
+- Definition classes inherit from corresponding reference classes. A reference
+  is not necessarily external.
+- Resolve attempts to find a definition. ImportReference produces a suitable
+  destination-module reference; it does not copy an implementation.
+- Read/modify/write uses one mutable object model. Automatic bookkeeping comes
+  from setters, collection hooks, shared object references, and writer logic.
+- A call operand may share a MethodDefinition object; not all independently
+  represented references, external callers, or reflection names update magically.
+- Write success is not semantic validation. Deletion, signature edits, branches,
+  EH boundaries, stack correctness, and external consumers remain concerns.
+- Properties have accessor methods; fields are separate storage definitions.
+  Auto-properties commonly have a property row, accessor methods, and backing
+  field. Removing a property alone does not remove all those other entities.
+- Custom attributes are separate applications owned by their targets. Two methods
+  with ExplorationAttribute have separate CustomAttribute entries/objects.
+  Removing one application does not delete the attribute class or another use.
+- Less common responsibilities were introduced: resources, interop/marshaling,
+  layouts, FieldRVA data, type forwarding, MethodImpl mappings, identity, signing,
+  entry points, and debug symbols. These were overview-level explanations only.
+- Debug symbols/PDBs were introduced as source/IL sequence-point mappings, local
+  names/scopes, and compiler-generated debugging information. The user asked what
+  they were; do not assume proficiency with symbol formats or preservation.
+- For each feature, distinguish editing support, correct preservation, and
+  explicit input rejection.
+
+4. Proposed Cecil exercises and supplied snippet
+------------------------------------------------
+Suggested exercises, with completion UNCONFIRMED:
+1. Enumerate sample types, fields, methods, attributes, including nested types.
+2. Inspect Add, PrintGreeting, and DivideOrDefault instructions/locals/EH.
+3. Remove ExplorationAttribute from Add only; write a NEW DLL and inspect ILSpy.
+4. Replace Twice(int) so it multiplies by three; run original/modified through a
+   caller in separate runs and verify the intended DLL is actually loaded.
+5. Explore resolving/importing and unsafe deletion boundaries later.
+
+Provided attribute-removal pattern:
+  using var assembly = AssemblyDefinition.ReadAssembly(inputPath);
+  var calculator = assembly.MainModule.GetTypes()
+      .Single(type => type.Name == "Calculator");
+  var add = calculator.Methods.Single(method => method.Name == "Add");
+  var attribute = add.CustomAttributes
+      .Single(a => a.AttributeType.Name == "ExplorationAttribute");
+  add.CustomAttributes.Remove(attribute);
+  assembly.Write(outputPath);
+
+The simple-name matching is for this known sample only. More general tooling
+must account for namespaces and overloads. Single intentionally exposes missing
+or ambiguous matches. inputPath/outputPath must be supplied; output is separate.
+
+5. Performance and concurrency discussion
+-----------------------------------------
+The 20-30 MB limit weakens "too large to fit in memory" as a central argument.
+Buffering compact input bytes is different from materializing an object graph.
+Object counts, instruction density, resources, repeated/batch processing, edit
+density, and analysis costs matter more than size alone.
+
+No speedup or graph-expansion multiplier was established. Cecil already uses
+deferred reading and can patch some unresolved bodies without instruction graphs.
+Do not compare against an artificially eager or needlessly serialized baseline.
+
+Concurrency is an additional hypothesis, not a completed design:
+- A globally locked graph may be safe but serial.
+- Fine-grained locks do not by themselves ensure a valid combined transformation.
+- Proposed direction: immutable shared input; worker-owned transformations/edit
+  plans or method graphs; coordinated conflict handling and token assignment;
+  potentially parallel body encoding into independent buffers afterwards.
+- Dense edits need not require a single shared mutable graph. Processing methods
+  in batches can bound transient memory.
+- Independent expensive per-method transformations are more promising than tiny
+  flag/attribute edits. Global reachability/deletion is harder to coordinate.
+- Allocation, GC, memory bandwidth, load imbalance, and output costs limit gains.
+  Parallel workers can increase peak memory.
+- Distinguish inter-assembly from intra-assembly concurrency and compare fairly
+  against existing parallel processing of independent assemblies.
+- SRM does not automatically provide a thread-safe mutable writer architecture.
+
+An illustrative Amdahl calculation used 80% parallelizable work and four workers
+to obtain an ideal 2.5x ceiling. Those percentages were hypothetical, NOT measured
+and NOT a prediction for this project.
+
+6. Evidence-first profiling proposal (not yet carried out)
+----------------------------------------------------------
+The user proposed forking/instrumenting Cecil and running actual use cases to
+learn timing, allocations, and call counts. This was endorsed with qualifications:
+
+1. Establish an unmodified profiler baseline on real transformations.
+2. Instrument meaningful boundaries in a compatible fork:
+   - materialized definitions/attributes/instructions;
+   - decoded body count and IL bytes;
+   - deferred reads and resolution/cache activity;
+   - raw-body versus instruction-based writing paths;
+   - phase timings and contention.
+3. Substitute the fork in the existing tool without changing its algorithm and
+   ensure the process actually loads it.
+4. Form a bottleneck hypothesis, prototype an optimization, compare equivalent
+   outputs and end-to-end performance.
+
+Measure elapsed and CPU time, total allocated bytes, GC, and peak/retained memory
+as distinct quantities. Sampling is not exact call counting. Avoid timing every
+tiny getter, per-operation logging, contended counters, and summing overlapping
+inclusive times. Keep unmodified runs as the reference.
+
+Corpus suggestions, NOT selected/downloaded benchmark assets:
+- Approved real team stripping jobs with dependencies, commands, rules/roots,
+  expected outputs, and representative batch structure.
+- Pinned public NuGet families such as Newtonsoft.Json, Roslyn
+  Microsoft.CodeAnalysis.CSharp, and Entity Framework Core.
+- Implementation DLLs for a selected framework, not reference-only ref assemblies.
+- Runnable public apps for full trimming, where entry points/roots define usage.
+- ILLink test cases for correctness, not automatically performance realism.
+- Generated cases for controlled scaling, supplementary to real workloads.
+
+A set of DLLs is only a corpus: workload = input + dependencies + transformation
+configuration + correctness criterion. Known-removal stripping differs from full
+reachability/reflection-aware trimming. No representative corpus currently exists.
+Internal inputs must remain in approved environments; public inputs aid thesis
+reproducibility.
+
+7. Source-size measurement
+--------------------------
+Counted C# physical lines from a pinned Cecil source archive:
+https://github.com/jbevain/cecil/tree/882ca5eedda1e62eb41bd5869aeb15d8f1538e51
+
+- Core directories plus root helper: 32,799 physical / 26,350 nonblank lines.
+- Entire archive's C# files: 56,364 physical lines.
+- Remaining groups: Test 9,883; rocks 2,249; symbols 11,433.
+- Counts include comments; physical counts also include blank lines. Folder
+  categories are not a precise production-versus-test classification.
+- Download/count was performed in memory; no persistent Cecil checkout created.
+
+These figures do not predict replacement effort. SRM removes low-level work, but
+preservation, semantics, compatibility, and testing remain substantial.
+
+8. Files, resources, and environment
+------------------------------------
+Workspace:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout
+
+Original sample source:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout\Scratchpad\DllExplorerSample
+
+User-reported active compiled sample:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite\docs\learning-exploring\dll-inspection\bin\Release\net10.0\DllExplorerSample.dll
+
+The active project's sources have not been inspected; copies may differ.
+See the previous supplement for sample contents and build details.
+Windows x64 environment. Prior successful user compilation means do not assume
+the SDK is still missing. Exact SDK/Cecil package versions are unverified.
+
+Cecil learning resources checked:
+https://www.mono-project.com/docs/tools+libraries/libraries/Mono.Cecil/
+https://github.com/jbevain/cecil/wiki/HOWTO
+https://github.com/jbevain/cecil/wiki
+https://github.com/jbevain/cecil
+
+9. Recommended next-agent approach
+----------------------------------
+Honor the user's request to move to SRM. Do not require more Cecil source browsing
+or pretend the proposed Cecil exercises have been completed.
+
+Suggested incremental path, not an already agreed implementation task:
+1. Use the same sample and show FileStream -> PEReader -> MetadataReader.
+2. Read assembly identity and enumerate TypeDefinitionHandles.
+3. Demonstrate handle -> metadata record -> heap value, contrasted with Cecil's
+   navigable mutable objects. Explain namespaces to avoid same-name confusion.
+4. Enumerate methods, inspect RVA and MethodBodyBlock, then introduce raw IL
+   bytes and token operands without claiming SRM gives Cecil instruction objects.
+5. Decode one signature with guidance; do not assume knowledge of providers.
+6. Later introduce a tiny emission example and distinguish constructing output
+   with builders from editing/preserving an arbitrary existing assembly.
+
+Teach one concept at a time with small C# examples and links to familiar DLL
+structures. Check understanding through a concrete explanation or exercise,
+not through whether a topic has previously appeared in chat.
+Avoid overwhelming the user with a generic copier, concurrency implementation,
+full ECMA-335 reading, or a premature comprehensive public API.
+
+No thesis API, performance claim, concurrency guarantee, or workload selection is
+settled. The immediate task is learning SRM, with evidence-based design later.

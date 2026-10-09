@@ -1,0 +1,272 @@
+IL REWRITE THESIS - SRM LEARNING AND PERFORMANCE HANDOFF
+Updated: 2026-09-15, following the 12:31 user request
+=====================================================
+
+Purpose and reading order
+-------------------------
+Read after:
+1. ILRewriteThesis-Handoff.txt
+2. ILRewriteThesis-Handoff-Supplement.txt
+3. ILRewriteThesis-Handoff-Cecil-to-SRM.txt
+4. This file.
+
+Companion learning reference created in the same workspace:
+  SRM-Cheatsheet.md
+It expands the earlier chat-only Markdown cheat sheet with writing, concurrency,
+performance corrections, and numbered primary references. No earlier Markdown
+file was found in the workspace. Earlier handoffs were left unchanged.
+
+This file supersedes the previous handoff's "SRM not started" status and its
+recommendation to begin SRM reading. The user has completed introductory reading
+exercises and wants to move toward investigating a real stripping workload.
+
+CRITICAL teaching boundary: explained != understood != implemented.
+The user explicitly asked previous handoffs not to assume mastery of everything
+discussed. Keep this distinction when continuing.
+
+1. Direction and current decision
+---------------------------------
+Long-term goal remains an extensible SRM-based rewriting library, with a useful
+bachelor-thesis subset and potential broader Cecil-like support later.
+The team will participate in API design; no API or implementation is finalized.
+Correctness is baseline. A real performance benefit is essential to the user.
+
+The user reports:
+- A large target DLL is at most approximately 20-30 MB.
+- The team wants better compatibility/maintenance and thread-safe parallel edits.
+These are reported requirements, not experimentally characterized workloads.
+
+The user has become openly skeptical of the speedup rationale. This is reasonable
+and should not be answered with speculative reassurance or invented multipliers.
+The assistant explicitly corrected earlier optimistic/generalized claims:
+  Technical feasibility is established in principle.
+  Meaningful speedup on the intended workload is NOT established.
+
+The agreed next direction is evidence-first: obtain a representative existing
+Cecil stripping job, profile its real phases, then prototype a targeted change.
+The user said this is exactly what they were thinking about.
+More broad SRM study is not a prerequisite for profiling Cecil.
+
+No workload, profiler, instrumentation fork, benchmark corpus, target threshold,
+or optimization implementation has yet been selected or produced.
+
+2. Demonstrated SRM progress
+----------------------------
+User supplied successful program output, not source files, showing:
+- Assembly identity:
+    DllExplorerSample, version 1.2.3.0.
+- Type enumeration:
+    <Module>
+    DllExplorerSample.ExplorationAttribute
+    DllExplorerSample.Calculator
+    HiddenHelper with an empty namespace (nested inside Calculator).
+- Per-type fields and methods, including compiler-generated backing fields,
+  accessors, constructors, flags, and method RVAs.
+- Reading Calculator.Add's method body:
+    RVA: 8337 decimal
+    MaxStack: 8
+    LocalSignature.IsNil: True
+    ExceptionRegions.Length: 0
+    IL: 02280D0000060304582A
+- Following the known call operand token to:
+    CountCall, flags Private, HideBySig, RVA 8415 decimal.
+
+The instruction sequence was decoded manually in discussion:
+  ldarg.0
+  call 0x0600000D
+  ldarg.1
+  ldarg.2
+  add
+  ret
+The call's four little-endian bytes are 0D 00 00 06.
+MethodDef row 13 is specific to this compiled sample, not stable across builds.
+The user followed a hard-coded known token; they did NOT implement an IL decoder.
+
+The SRM exploration program's source path and exact code have not been inspected.
+Do not claim that the assistant compiled or validated the user's program.
+
+3. Topics explained or explicitly acknowledged
+----------------------------------------------
+Reading mechanics:
+- FileStream -> PEReader -> MetadataReader.
+- using declaration disposes on scope exit, not at last use; disposal is not GC.
+- FileAccess vs FileShare; FileShare.ReadWrite allows modification and is not a
+  snapshot guarantee. FileShare.Read was recommended for the Windows exercise.
+- Default lazy/block reading vs PrefetchMetadata vs PrefetchEntireImage.
+- Full input byte buffering is not full object-graph construction.
+- Keep backing memory stable/alive, and do not dispose while workers read.
+- Full-image prefetch is a reasonable configurable prototype policy for rewriting,
+  not a measured fastest setting or a concurrency solution.
+
+Metadata:
+- TypeDefinitions enumerates TypeDefinitionHandles, including nested types.
+- Handles identify rows; GetTypeDefinition returns a lightweight reader/row view;
+  property access reads columns; GetString decodes heap text.
+- Metadata is available in memory, not fetched by a disk read per getter.
+- StringHandle is a locator, not a C# string, global ID, or pointer.
+- reader.StringComparer.Equals(handle, text) avoids intermediate decoded strings.
+- IsNil is a property; table row zero means no entity, not comprehensive validity.
+- EntityHandle.Kind discriminates table kinds; permitted kinds depend on context.
+- GetAssemblyDefinition, Name vs GetAssemblyName/GetAssemblyNameInfo.
+- Assembly version is four numeric fields, not a string-heap entry.
+- Table/heap getters; BlobReader vs copying blob bytes.
+- TypeDef.MethodList ownership ranges; GetDeclaringType is a metadata lookup.
+  Avoid rediscovering an owner already known in the traversal, but do not assume
+  this is a material bottleneck or immediately add caches.
+- Method/field flags vs custom attributes.
+
+Bodies and references:
+- RVA -> MethodBodyBlock; MaxStack is a limit (tiny header implies 8).
+- Locals vs parameters vs evaluation stack; source locals may be optimized away.
+- AsSpan on ImmutableArray adds no array copy. This does not establish that
+  GetILContent itself is a zero-copy operation.
+- MethodDef vs MemberRef, external TypeRef/AssemblyRef chains, MethodSpec.
+- Attribute applications refer to constructors; constructor declaring type gives
+  attribute type name. Constructor is MethodDef or MemberRef, not arbitrary kind.
+- SRM reads attributes without instantiation; runtime reflection requesting
+  actual instances can execute constructors and named-argument setters.
+
+4. Explicitly NOT completed
+---------------------------
+- Custom-attribute traversal: the user preferred to describe the approach rather
+  than implement it due to time. Their first assumption of a name on the attribute
+  record was corrected; name is reached via constructor -> declaring type.
+- Signature decoding: provider/context concept discussed. A primitive provider
+  implementation was offered; user explicitly declined writing the full interface
+  and said they understood the concept.
+- No general IL parser/disassembler.
+- No external dependency resolver.
+- No generic signature/context implementation.
+- No exception/local-signature decoding beyond printing body metadata.
+- No assembly emitted, rewritten, or executed through SRM.
+- No demonstrated completion of earlier Cecil rewriting exercises.
+- No benchmark/profiler or thesis implementation.
+
+The user has enough foundation to start investigation, not proven proficiency
+implementing a safe general-purpose rewriter.
+
+5. Writer introduction and qualifications
+-----------------------------------------
+Recommended official introduction:
+https://learn.microsoft.com/en-us/dotnet/api/system.reflection.metadata.ecma335.metadatabuilder?view=net-10.0#examples
+
+The user discussed it and articulated:
+  Builders add table/heap entries, but the caller must ensure coherent references,
+  signatures, and related content.
+No emission execution was reported.
+
+Explained pipeline:
+  MetadataBuilder for rows/heaps
+  BlobBuilder / BlobEncoder for bytes/signatures
+  InstructionEncoder / MethodBodyStreamEncoder for bodies
+  MetadataRootBuilder / ManagedPEBuilder for final output
+
+Important:
+- Adding a row does not immediately persist it to disk.
+- Builders perform some checks, not full semantic validation.
+- Input handles do not automatically refer to the correct output entities.
+- Method body stream offsets accepted by AddMethodDefinition are not input RVAs.
+- The example references mscorlib 4.0; it is not an unchanged .NET 10 template.
+- Proposed minimal Answer() => 42 emission exercise was never performed.
+- Do not force that exercise before workload investigation unless user wants it.
+
+6. Essential performance corrections to preserve
+------------------------------------------------
+The assistant initially described compact row structs as an SRM speed advantage.
+Source inspection then showed Cecil's final writer already uses arrays of row
+structs. This was explicitly corrected; do not repeat the simplistic comparison.
+
+Cecil writing:
+- Normally rebuilds a complete output image, not a delta file.
+- Builds metadata rows/heaps and method bodies, then emits the PE.
+- Has an unresolved/raw-body patching path as well as instruction-based emission.
+- Broad metadata materialization is not synonymous with decoding every IL body.
+- Can write different assemblies concurrently with independent mutable graphs,
+  services, and output destinations. This is not a new SRM capability.
+- Shared resolver caches can cause otherwise separate jobs to share objects.
+
+SRM:
+- Compact row lists and chunked BlobBuilder buffers are concrete implementation
+  mechanisms, not an end-to-end speedup benchmark.
+- Retaining a Cecil-like graph and replacing only the emitter may be faster,
+  equivalent, or slower; translation and required work must be counted.
+- Do not omit stack work, deduplication, symbols, signing, or preservation and
+  describe the result as equivalent faster emission.
+- Total gains depend on the actual dominant phase. No minimum gain is justified.
+
+Remaining hypotheses: avoid unnecessary materialization/decoding, repeated
+resolution, or parallelize expensive independent intra-assembly processing.
+None is demonstrated for the user's actual tool.
+
+7. Thread-safety discussion and evidence level
+---------------------------------------------
+The user specifically challenged "SRM is absolutely thread-safe."
+That blanket statement is false/too broad and was corrected.
+
+- PEReader explicitly supports parallel reading, excluding concurrent disposal.
+- Metadata views require stable backing memory/lifetime; custom decoders/providers
+  and mutable cursors have their own requirements.
+- A shared MetadataBuilder is not safe for unsynchronized mutation.
+- A shared BlobBuilder is not safe for unsynchronized appends.
+- Worker-local builders can be used independently; combination requires planning.
+- Thread safety is not parallel speedup; a global lock serializes work.
+- Individually safe edits do not guarantee a semantically valid combined result.
+
+Evidence for MetadataBuilder is implementation-based, not an explicit statement
+found on its API page:
+  _methodDefTable is a List<MethodRow>.
+  AddMethodDefinition does List.Add(...) then derives the result from List.Count
+  with no synchronization. There is both list mutation risk and an add/count race.
+  List<T> documentation requires synchronization for concurrent read/write use.
+
+Potential architecture, NOT settled:
+  Stable input -> worker-owned transformations -> coordinated handles/conflicts
+  -> independent body encoding where feasible -> coordinated metadata/final output.
+
+No concurrency prototype or throughput measurement exists.
+
+8. Next task orientation
+-------------------------
+Identify exact stripping tool and representative command:
+- Inputs and dependency closure.
+- Rules/roots/removal configuration.
+- Known-removal stripping versus full trimming analysis.
+- Expected output behavior and tests.
+- Runtime/tool versions and actual assembly-level parallelism.
+- Approved environment for internal data.
+
+Start with unchanged-tool profiling; only then consider an instrumented Cecil fork.
+Separate elapsed time, CPU, allocations, GC, peak memory, and retained memory.
+Avoid per-operation logging/timers that overwhelm tiny operations.
+Prototype one observed bottleneck before committing to a large architecture.
+
+No request to contact anyone or transmit internal data has been made.
+No team requirements have been independently confirmed through M365.
+
+9. Files and reference anchors
+------------------------------
+All handoffs and the new cheat sheet are in:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout
+
+User-reported sample:
+C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\projects\IL rewrite\docs\learning-exploring\dll-inspection\bin\Release\net10.0\DllExplorerSample.dll
+
+Original generated sample remains under workspace Scratchpad\DllExplorerSample.
+Do not assume copied source trees are synchronized.
+Exact installed SDK/SRM/Cecil versions and SRM program location remain unknown.
+
+SRM-Cheatsheet.md contains numbered references and pinned source links:
+- runtime revision: 6af607b8858d946ddbf4101a18b98de61c2eb5e1
+- Cecil revision: 882ca5eedda1e62eb41bd5869aeb15d8f1538e51
+These document inspected source snapshots, not the user's installed binaries.
+
+Key source files:
+runtime: PEReader.cs (parallel reading/disposal remarks)
+runtime: MetadataBuilder.Tables.cs (rows, AddMethodDefinition)
+runtime: BlobBuilder.cs (chunked mutable buffer)
+Cecil: Mono.Cecil\AssemblyWriter.cs (row arrays and writer orchestration)
+Cecil: Mono.Cecil.Cil\CodeWriter.cs (raw versus materialized bodies)
+
+For thesis claims, distinguish format specification, documented contract,
+source-derived observation, and untested hypothesis. The chat/cheat sheet is not
+a substitute for primary citations or benchmark evidence.

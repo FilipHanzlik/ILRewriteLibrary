@@ -1,0 +1,148 @@
+DLL EXPLORATION SAMPLE
+=====================
+
+Purpose
+-------
+Inspect a small managed DLL in ILSpy. This is a class library, not a console
+application: no Main method, executable launcher, or dotnet run step is needed.
+Opening the DLL in ILSpy does not execute its methods.
+
+Setup
+-----
+1. Install the .NET 10 SDK for Windows x64 from:
+   https://dotnet.microsoft.com/en-us/download/dotnet/10.0
+   Choose the SDK, not just the Runtime. The SDK contains the compiler.
+
+2. Open a new PowerShell terminal and run:
+   dotnet --list-sdks
+   A 10.0.xxx SDK should be listed.
+
+3. Change to this project folder:
+   Set-Location 'C:\Users\t-fhanzlik\OneDrive - Microsoft\Documents\Microsoft Scout\Scratchpad\DllExplorerSample'
+
+4. Compile:
+   dotnet build .\DllExplorerSample.csproj -c Release
+
+   Build restores the project's required SDK/framework assets automatically.
+   This project declares no third-party NuGet packages.
+
+5. The assembly to open is:
+   .\bin\Release\net10.0\DllExplorerSample.dll
+
+   DllExplorerSample.pdb contains debug information, not another copy of the IL.
+   The obj folder contains intermediate build files; ignore it for now.
+
+6. Install/open ILSpy:
+   https://github.com/icsharpcode/ILSpy/releases
+
+   Open the DLL using File > Open. Use its C# view for orientation, then switch
+   to IL. For raw tables/heaps use the metadata explorer:
+   https://github.com/icsharpcode/ILSpy/wiki/Metadata-Explorer
+
+   The precise navigation depends on the ILSpy version. Do not rely exclusively
+   on decompiled C#: it deliberately hides many compiler-generated details.
+
+Exploration route
+-----------------
+1. Assembly identity and references
+
+   Find the Assembly table: name DllExplorerSample, version 1.2.3.0, neutral
+   culture, and no strong-name public key.
+
+   Inspect AssemblyRef. System.Runtime and System.Console should be among the
+   referenced assemblies. Their versions follow the framework used to compile.
+   Notice that these records identify assemblies, not absolute disk paths.
+
+2. Names and ownership
+
+   Find Calculator in TypeDef, Add in MethodDef, and _callCount in Field.
+   Follow a Name index into #Strings.
+
+   Find HiddenHelper. It is a private nested type, but still has metadata.
+   The NestedClass table connects it to Calculator.
+
+   Expect a special <Module> type and other compiler-generated metadata too.
+   Not every record corresponds to a declaration explicitly written in source.
+
+3. Signatures and method bodies
+
+   On the Add MethodDef row, inspect Name, Signature, and RVA.
+   Name refers into #Strings; Signature refers into #Blob; RVA locates the body.
+
+   Its signature records an instance method returning Int32 with two explicit
+   Int32 parameters. The implicit this argument is not an explicit parameter.
+
+   View Add as IL. Find the call to CountCall and the add instruction.
+   For this instance method, argument 0 is this, 1 is left, and 2 is right.
+
+   A token identifies a metadata record; an RVA locates a body. Neither is
+   simply the method's offset into the file.
+
+4. Definitions versus references
+
+   In Add, the call to CountCall can refer directly to a MethodDef in this module.
+   In PrintGreeting, follow Console.WriteLine through MemberRef, TypeRef, and
+   AssemblyRef. Its implementation is in another assembly.
+
+5. Two different string heaps
+
+   Find PrintGreeting's name in #Strings.
+   Its ldstr operand refers to "Hello from the DLL" in #US.
+
+   Attribute string arguments are different again: they are encoded inside the
+   custom attribute value blob in #Blob, not as ldstr user strings.
+
+6. Custom attributes
+
+   Find the Exploration attribute on Add in the CustomAttribute table.
+   Its Parent identifies Add; its constructor identifies ExplorationAttribute's
+   constructor; its Value points into #Blob.
+
+   The blob encodes "Adds two integers" as the constructor argument, plus the
+   named property argument Revision = 2.
+
+   Also inspect the assembly-level AssemblyMetadata attribute.
+
+7. Properties, fields, and constants
+
+   Compare CallCount with Label. Both are properties, but Label has a
+   compiler-generated backing field and accessor methods.
+
+   Property and MethodSemantics records associate properties with accessors.
+   Inspect get_CallCount, get_Label, set_Label, and the Calculator constructor.
+   The constructor performs the Label initializer.
+
+   DefaultDivisor is a literal field. Its value is represented through the
+   Constant table and a blob; it is not an ordinary per-object field.
+
+8. Exceptions and generics
+
+   Inspect DivideOrDefault's IL and exception handler region. The catch clause
+   identifies DivideByZeroException; the handler is not just another call.
+
+   Inspect Identity<T> and GenericParam. Its signature uses a method generic
+   parameter, not a concrete type named T. Do not learn the binary encoding yet.
+
+Small experiments
+-----------------
+Change "Hello from the DLL", rebuild, and reopen/reload the output in ILSpy.
+Find which heap contains the new value.
+
+Change Exploration's Revision on Add, rebuild, and inspect its attribute blob.
+The arithmetic in Add has not changed.
+
+Optionally build Debug:
+   dotnet build .\DllExplorerSample.csproj -c Debug
+
+Open .\bin\Debug\net10.0\DllExplorerSample.dll and compare Add's IL with Release.
+Debug may include extra locals or nop instructions. Both implement the same
+source behavior. Exact instruction layout depends on compiler configuration.
+
+Stop point
+----------
+You are ready for the Cecil exercise when you can trace:
+  MethodDef -> name, signature, and body
+  call -> method reference -> external type -> assembly reference
+  CustomAttribute -> owner, constructor, and encoded arguments
+
+You do not need to decode every blob by hand or memorize metadata table numbers.
