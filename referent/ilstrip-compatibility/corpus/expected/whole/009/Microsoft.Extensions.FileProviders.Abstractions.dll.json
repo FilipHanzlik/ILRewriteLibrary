@@ -1,0 +1,107 @@
+{
+  "sha256": "5e7e175e6e1d1963153650395af3c3b2d8e37e1fe09975005529f2b3147fa3d1",
+  "normalizedSha256": "6066fd6a062472dddcb080bba953bf19af8f4ccb004c0169d52281156a033664",
+  "length": 6656,
+  "mvid": "3e01f509-6f2f-4e70-91f8-21914e732dc5",
+  "machine": "I386",
+  "entryPoint": 0,
+  "corFlags": 9,
+  "strongNameSignatureSize": 128,
+  "strongNameSignatureAllZero": true,
+  "tableRows": {
+    "Module": 1,
+    "TypeRef": 11,
+    "TypeDef": 2,
+    "FieldPtr": 0,
+    "Field": 0,
+    "MethodPtr": 0,
+    "MethodDef": 0,
+    "ParamPtr": 0,
+    "Param": 0,
+    "InterfaceImpl": 0,
+    "MemberRef": 10,
+    "Constant": 0,
+    "CustomAttribute": 10,
+    "FieldMarshal": 0,
+    "DeclSecurity": 0,
+    "ClassLayout": 0,
+    "FieldLayout": 0,
+    "StandAloneSig": 0,
+    "EventMap": 0,
+    "EventPtr": 0,
+    "Event": 0,
+    "PropertyMap": 0,
+    "PropertyPtr": 0,
+    "Property": 0,
+    "MethodSemantics": 0,
+    "MethodImpl": 0,
+    "ModuleRef": 0,
+    "TypeSpec": 0,
+    "ImplMap": 0,
+    "FieldRva": 0,
+    "EncLog": 0,
+    "EncMap": 0,
+    "Assembly": 1,
+    "AssemblyProcessor": 0,
+    "AssemblyOS": 0,
+    "AssemblyRef": 1,
+    "AssemblyRefProcessor": 0,
+    "AssemblyRefOS": 0,
+    "File": 0,
+    "ExportedType": 0,
+    "ManifestResource": 2,
+    "NestedClass": 0,
+    "GenericParam": 0,
+    "MethodSpec": 0,
+    "GenericParamConstraint": 0,
+    "Document": 0,
+    "MethodDebugInformation": 0,
+    "LocalScope": 0,
+    "LocalVariable": 0,
+    "LocalConstant": 0,
+    "ImportScope": 0,
+    "StateMachineMethod": 0,
+    "CustomDebugInformation": 0
+  },
+  "methods": [],
+  "resources": [
+    {
+      "name": "FxResources.Microsoft.Extensions.FileProviders.Abstractions.SR.resources",
+      "attributes": 1,
+      "implementationToken": 637534208,
+      "length": 249,
+      "sha256": "cd73c64ca443bcf0b53f9a4b501faabbb643a3eb6a98c613dfc0d4e0c36dc5e4"
+    },
+    {
+      "name": "ILLink.Substitutions.xml",
+      "attributes": 1,
+      "implementationToken": 637534208,
+      "length": 933,
+      "sha256": "ed8ff49f3b8e712d2e3337309629bc965cef94f8a3d3821fddf0b9e6aaa20035"
+    }
+  ],
+  "debugDirectory": [
+    {
+      "type": "Reproducible",
+      "stamp": 1791539180,
+      "majorVersion": 0,
+      "minorVersion": 0,
+      "isPortableCodeView": false,
+      "guid": null,
+      "age": null,
+      "path": null
+    }
+  ],
+  "normalizationRanges": [
+    {
+      "offset": 136,
+      "length": 4,
+      "reason": "COFF TimeDateStamp"
+    },
+    {
+      "offset": 1920,
+      "length": 4,
+      "reason": "Debug[0].TimeDateStamp (legacy Reproducible entry)"
+    }
+  ]
+}

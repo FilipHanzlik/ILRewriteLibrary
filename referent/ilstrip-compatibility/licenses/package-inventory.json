@@ -1,0 +1,213 @@
+[
+  {
+    "id": "CommunityToolkit.Maui",
+    "version": "12.3.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "CommunityToolkit.Maui.Core",
+    "version": "12.3.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "CommunityToolkit.Mvvm",
+    "version": "8.3.2",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "(c) .NET Foundation and Contributors. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Data.Sqlite.Core",
+    "version": "8.0.8",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.Configuration",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.Configuration.Abstractions",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.DependencyInjection",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.DependencyInjection.Abstractions",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.Diagnostics.Abstractions",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.FileProviders.Abstractions",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.Hosting.Abstractions",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.Logging",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.Logging.Abstractions",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.Options",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Extensions.Primitives",
+    "version": "10.0.0",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Maui.Controls.Core",
+    "version": "10.0.110",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Maui.Controls.Xaml",
+    "version": "10.0.110",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Maui.Core",
+    "version": "10.0.110",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Maui.Essentials",
+    "version": "10.0.110",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.Maui.Graphics",
+    "version": "10.0.110",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "licenseType": "expression",
+    "copyright": "© Microsoft Corporation. All rights reserved."
+  },
+  {
+    "id": "Microsoft.NETCore.App.Runtime.Mono.iossimulator-arm64",
+    "version": "10.0.12",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "source": "SDK/workload pack",
+    "licenseFile": "licenses/mono-runtime/LICENSE.TXT"
+  },
+  {
+    "id": "Microsoft.iOS.Runtime.ios.net10.0_27.0",
+    "version": "27.0.10722",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "MIT",
+    "source": "SDK/workload pack",
+    "licenseFile": "licenses/ios-sdk/LICENSE"
+  },
+  {
+    "id": "SQLitePCLRaw.bundle_green",
+    "version": "2.1.10",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "Apache-2.0",
+    "licenseType": "expression",
+    "copyright": "Copyright 2014-2024 SourceGear, LLC",
+    "licenseFile": "licenses/additional/SQLitePCLRaw-LICENSE.TXT"
+  },
+  {
+    "id": "SQLitePCLRaw.core",
+    "version": "2.1.10",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "Apache-2.0",
+    "licenseType": "expression",
+    "copyright": "Copyright 2014-2024 SourceGear, LLC",
+    "licenseFile": "licenses/additional/SQLitePCLRaw-LICENSE.TXT"
+  },
+  {
+    "id": "SQLitePCLRaw.provider.sqlite3",
+    "version": "2.1.10",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "Apache-2.0",
+    "licenseType": "expression",
+    "copyright": "Copyright 2014-2024 SourceGear, LLC",
+    "licenseFile": "licenses/additional/SQLitePCLRaw-LICENSE.TXT"
+  },
+  {
+    "id": "Syncfusion.Maui.Toolkit",
+    "version": "1.0.8",
+    "assemblyOrigin": "linked/stripped fixture",
+    "license": "LICENSE.txt",
+    "licenseType": "file",
+    "copyright": "Copyright 2001 - 2025 Syncfusion Inc."
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "name": "wrong-mvid",
+  "input": "inputs/025/MauiStripSample.dll",
+  "mvid": "00000000-0000-0000-0000-000000000000",
+  "tokens": [],
+  "taskSucceeded": false,
+  "cliExitCode": 1,
+  "exceptionType": null,
+  "errors": [
+    "[ILStrip] GUID value of \u003Ccorpus\u003E/inputs/025/MauiStripSample.dll doesn\u0027t match the value listed in <capture-root>/runs-final/tokens/wrong-mvid.txt."
+  ],
+  "producesFile": false,
+  "outputSha256": null
+}

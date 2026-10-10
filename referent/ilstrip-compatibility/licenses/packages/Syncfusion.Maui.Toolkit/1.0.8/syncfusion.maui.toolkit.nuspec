@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
+  <metadata>
+    <id>Syncfusion.Maui.Toolkit</id>
+    <version>1.0.8</version>
+    <title>Syncfusion Toolkit for .NET MAUI</title>
+    <authors>Syncfusion Inc.</authors>
+    <owners>Syncfusion Inc.</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <license type="file">LICENSE.txt</license>
+    <licenseUrl>https://aka.ms/deprecateLicenseUrl</licenseUrl>
+    <icon>syncfusion_logo.png</icon>
+    <projectUrl>https://www.syncfusion.com/maui-controls/?utm_source=nuget&amp;utm_medium=listing</projectUrl>
+    <description>This package contains the Syncfusion Toolkit components for .NET MAUI</description>
+    <releaseNotes>https://help.syncfusion.com/maui-toolkit/release-notes/v1.0.8?utm_source=nuget&amp;amp;utm_medium=listing</releaseNotes>
+    <copyright>Copyright 2001 - 2025 Syncfusion Inc.</copyright>
+    <tags>syncfusion maui ios android winui maccatalyst dotnet toolkit text-input-layout effects-view cartesian-charts circular-charts tabview navigationdrawer carousel shimmer chips pull-to-refresh segmented-control</tags>
+    <readme>README.md</readme>
+  </metadata>
+</package>

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <OracleDirectory>$(MSBuildThisFileDirectory)../.dotnet/packs/Microsoft.iOS.Sdk.net10.0_27.0/27.0.10722/tools/msbuild/net10.0</OracleDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="MonoTargetsTasks" HintPath="$(OracleDirectory)/MonoTargetsTasks.dll" />
+    <Reference Include="AssemblyStripper" HintPath="$(OracleDirectory)/AssemblyStripper.dll" />
+    <Reference Include="Microsoft.Build" HintPath="$(MSBuildBinPath)/Microsoft.Build.dll" />
+    <Reference Include="Microsoft.Build.Framework" HintPath="$(MSBuildBinPath)/Microsoft.Build.Framework.dll" />
+    <Reference Include="Microsoft.Build.Utilities.Core" HintPath="$(MSBuildBinPath)/Microsoft.Build.Utilities.Core.dll" />
+    <Reference Include="Microsoft.NET.StringTools" HintPath="$(MSBuildBinPath)/Microsoft.NET.StringTools.dll" />
+    <Reference Include="System.Configuration.ConfigurationManager" HintPath="$(MSBuildBinPath)/System.Configuration.ConfigurationManager.dll" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,16 @@
+{
+  "name": "shared-partial",
+  "input": "expected/whole/025/MauiStripSample.dll",
+  "tokens": [
+    "06000001"
+  ],
+  "mvid": "a5f5959c-869a-4599-8da3-6a4d2bba83b1",
+  "output": "expected/selective/shared-partial/MauiStripSample.dll",
+  "outputSha256": "54e553e34ce4f157f42b0b97065c53751d6a400ec6b973786fdcec742d62ba5d",
+  "inputLength": 512000,
+  "outputLength": 512000,
+  "selectedMethodCount": 1,
+  "changedByteCount": 0,
+  "byteIdenticalAcrossRuns": true,
+  "producesFile": true
+}

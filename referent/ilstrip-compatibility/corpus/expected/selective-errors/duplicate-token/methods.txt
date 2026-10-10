@@ -1,0 +1,4 @@
+inputs/025/MauiStripSample.dll
+a5f5959c-869a-4599-8da3-6a4d2bba83b1
+06000001
+06000001

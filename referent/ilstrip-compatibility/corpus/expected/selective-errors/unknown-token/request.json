@@ -1,0 +1,16 @@
+{
+  "name": "unknown-token",
+  "input": "inputs/025/MauiStripSample.dll",
+  "mvid": "a5f5959c-869a-4599-8da3-6a4d2bba83b1",
+  "tokens": [
+    "06000000"
+  ],
+  "taskSucceeded": false,
+  "cliExitCode": 1,
+  "exceptionType": null,
+  "errors": [
+    "Method token: 06000000 in <capture-root>/runs-final/tokens/unknown-token.txt can\u0027t be found within the assembly."
+  ],
+  "producesFile": true,
+  "outputSha256": "dc52b5caf03de951728471ba64a33b791f4b943013360a98b64c3cb007b49180"
+}

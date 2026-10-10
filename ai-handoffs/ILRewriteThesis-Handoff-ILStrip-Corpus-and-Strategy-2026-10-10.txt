@@ -1,0 +1,231 @@
+IL REWRITE THESIS - ILSTRIP CORPUS, SOURCE ANALYSIS, AND BENCHMARK VISION
+Updated: 2026-10-10
+========================================================================
+
+Purpose and reading order
+-------------------------
+This handoff records the discoveries, technical analyses, strategic decisions,
+and benchmarking architecture established on October 9-10, 2026.
+It integrates:
+1. The arrival and audit of the referent's ILStrip compatibility bundle
+   (`referent/ilstrip-compatibility`).
+2. Source-level analysis of `AssemblyStripper.cs` and `ILStrip.cs` from `dotnet/runtime`.
+3. Resolution of tool taxonomy: `ILLink` vs. `ILStrip` vs. `ILTrim`.
+4. Strategic choice between full upfront analysis vs. ILStrip-first iterative development.
+5. The unified E2E benchmark and automated correctness verification harness vision.
+
+Reading order within the thesis documentation:
+1. `ILRewriteThesis-Handoff.txt` (Initial proposal & hypothesis)
+2. `ILRewriteThesis-Handoff-Supplement.txt` (Initial corrections, DLL basics)
+3. `ILRewriteThesis-Handoff-Cecil-to-SRM.txt` & `ILRewriteThesis-Handoff-SRM.txt`
+4. `ILRewriteThesis-Handoff-ILLink-Profiling.txt` (PerfView trace analysis, Blazor baseline)
+5. `ILRewriteThesis-Handoff-Cecil-Instrumentation.txt` (Provenance, use-case inventory)
+6. `ILRewriteThesis-Handoff-Cecil-Recorder-2026-09-23.txt` (Cecil recorder & calculator demo)
+7. `il_rewrite_thesis_benchmarking_profiling_strategy.txt` (Pivot to E2E benchmarking)
+8. THIS FILE (`ILRewriteThesis-Handoff-ILStrip-Corpus-and-Strategy-2026-10-10.txt`).
+
+
+1. EXECUTIVE STRATEGY & THE SELECTED PATH
+------------------------------------------
+Two strategic paths were evaluated:
+- Alternative 1 (Full Upfront Multi-Workload Analysis): Collect and profile representative
+  workloads across all use-case tiers (Light, Medium, Heavy) before writing rewrite code.
+- Alternative 2 (ILStrip-First Iterative Development): Implement and benchmark the ILStrip
+  workload first against the referent's 67-assembly corpus, building an extensible
+  System.Reflection.Metadata (SRM) copy-through engine, and then incrementally add
+  richer mutation and analysis scenarios.
+
+Decision: ALTERNATIVE 2 IS ADOPTED.
+
+Rationale:
+1. Strong Referent Alignment: The referent delivered a complete, frozen ILStrip corpus
+   with 67 production assemblies and an automated verifier on 2026-10-09. This is the team's
+   immediate target for an SRM-based replacement.
+2. High Architectural Reuse: The hardest part of writing an SRM rewriter is the container
+   and metadata layer: reading PE headers via `PEReader`, preserving/copying metadata heaps
+   (`#Strings`, `#Blob`, `#GUID`, `#US`), updating table rows via `MetadataBuilder`, and
+   emitting a valid PE via `ManagedPEBuilder`. All of this is required for ILStrip and
+   provides 70-80% of the reusable foundation for any future rewrite workload.
+3. De-Risking the Bachelor Thesis: A completed, verified prototype that outperforms
+   Mono.Cecil on 67 real production assemblies guarantees a high-impact thesis result
+   early, avoiding "analysis paralysis" from complex mobile SDK environments.
+4. Spectrum Coverage via "Low-Hanging Fruits": The broader spectrum of workloads
+   (Medium/Metadata-only, Heavy/IL-generative, Heavy/Trimming) can be represented using
+   assets already in this workspace without complex multi-repository SDK builds.
+
+
+2. THE REFERENT ILSTRIP COMPATIBILITY CORPUS (`referent/ilstrip-compatibility`)
+-------------------------------------------------------------------------------
+Delivered as a frozen test and verification archive captured from a real .NET 10 MAUI
+iOS Release build (`dotnet new maui --sample-content`, `net10.0-ios`, `iossimulator-arm64`).
+
+2.1 Contents & Layout
+- `corpus/inputs/<000..066>/<assembly>.dll`: 67 real input assemblies totaling 11,674,272 bytes.
+  Ranging from tiny configuration DLLs (5 KB) to major framework DLLs:
+  - `Microsoft.Maui.Controls.dll`: 2.04 MB
+  - `System.Private.CoreLib.dll`: 1.85 MB
+  - `Microsoft.iOS.dll`: 1.77 MB
+  - `Syncfusion.Maui.Toolkit.dll`: 1.08 MB
+  - `MauiStripSample.dll` (the application assembly): 744 KB (1,166 methods, 74 EH regions)
+- `corpus/expected/whole/<index>/<assembly>.dll`: Exact outputs from the shipped iOS
+  `MobileILStrip` task (totaling 7,436,288 bytes; an overall 36% physical file size reduction).
+- `corpus/expected/whole-deterministic/<index>/<assembly>.dll`: Golden outputs with
+  wall-clock timestamps zeroed out for exact byte-for-byte (`SHA-256`) equality verification.
+- `corpus/expected/selective/<case>/`: 5 method-level fixtures (`empty`, `mixed`, `all`,
+  `shared-partial`, `shared-all`).
+- `corpus/expected/selective-errors/<case>/`: 4 negative fixtures (`wrong-mvid`,
+  `unknown-token`, `duplicate-token`, `malformed-token`).
+- `corpus/manifest.json`: Master schema indexing all 67 fixtures, file lengths, MVIDs,
+  hashes, and compatibility observations.
+- `replay/bin/Release/net10.0/`: Contains prebuilt .NET 10 binaries of:
+  - `StripReplay.dll`: The test harness and verifier CLI.
+  - `AssemblyStripper.dll` & `MonoTargetsTasks.dll`: The actual legacy oracle assemblies
+    shipped in the .NET 10 iOS SDK pack.
+
+2.2 Determinism & Timestamp Normalization
+Because Mono.Cecil stamps the current wall-clock `DateTime.UtcNow` into the COFF header
+and Debug directory when writing, raw whole-assembly outputs differ across runs by 8 bytes.
+The verifier (`BinaryInspection.NormalizedBytes`) discovers and zeroes these specific ranges:
+1. COFF `TimeDateStamp`: `PEHeaders.CoffHeaderStartOffset + 4` (4 bytes).
+2. Debug directory `TimeDateStamp`: For non-portable CodeView and Reproducible entries (4 bytes).
+The resulting `NormalizedSha256` enables exact SHA-256 assertions against `deterministicExpected`.
+
+
+3. SOURCE ANALYSIS: `AssemblyStripper.cs` AND `ILStrip.cs`
+---------------------------------------------------------
+Official sources downloaded and analyzed directly from `dotnet/runtime`:
+
+3.1 `AssemblyStripper.cs` (Legacy Cecil Whole-Assembly Stripper, ~250 lines)
+The entire transformation is an 8-step pipeline:
+1. `FullLoad()`: Eagerly materializes the entire Mono.Cecil mutable object graph.
+   (THE CORE PERFORMANCE BOTTLENECK).
+2. `ClearMethodBodies()`: Iterates all methods; if `method.HasBody`, allocates
+   `new MethodBody(method)`, emits `OpCodes.Ret` (`0x2a`), and assigns `method.Body`.
+3. `CopyOriginalImage()`: Clones PE headers via `CopyImageVisitor`, copies metadata tables
+   and bitmasks (`Valid`, `Sorted`), sets `CodeWriter.Stripped = true`, and performs a
+   raw byte pass-through of the 4 metadata heaps (`#Strings`, `#GUID`, `#US`, `#Blob`)
+   via `PatchHeap`.
+4. `PatchMethods()`: Updates `MethodRow` in stripped tables; sets `ImplFlags |= NoInlining`,
+   and points RVAs of all body-bearing methods to the single shared stub RVA (RVA 0 for bodyless).
+5. `PatchFields()`: Adjusts `FieldRVA` offsets.
+6. `PatchResources()`: Re-links embedded resource data offsets.
+7. `SortCustomAttributes()`: Re-sorts the `CustomAttribute` table by parent using
+   `CustomAttrRowComparer`.
+8. `Write()`: Emits the PE file.
+
+`CustomAttrRowComparer` & Legacy Defect:
+ECMA-335 requires the `CustomAttribute` table to be sorted by `Parent` to permit binary
+search by runtime loaders. `Parent` is an encoded Coded Index (`HasCustomAttribute`).
+Legacy defect identified: The Cecil `Utilities.CompressMetadataToken` implementation
+handles tags 0-19 but fails on tags 20 (`GenericParamConstraint`) and 21 (`MethodSpec`),
+corrupting constraint-owned attribute parents to `06000000` (MethodDef 0) across 107
+attributes in the corpus (e.g. 79 in `System.Private.CoreLib.dll`).
+The SRM replacement must preserve all legal owner associations.
+
+3.2 `ILStrip.cs` (MSBuild Task & Selective Trimming, ~370 lines)
+Performs two distinct functions:
+1. MSBuild Runner: Orchestrates parallel stripping across assemblies via
+   `Parallel.ForEach`, handles logging, and invokes `AssemblyStripper.TryStripAssembly`
+   when `TrimIndividualMethods=false`.
+2. Selective Method Trimming (`TrimMethods`): When `TrimIndividualMethods=true`.
+   CRITICAL DISCOVERY: SELECTIVE TRIMMING USES ZERO MONO.CECIL.
+   It uses `System.Reflection.Metadata` (`PEReader` / `MetadataReader`) to read tokens/RVAs,
+   clones the input file via `FileStream.CopyTo()`, calculates physical section byte offsets,
+   and punches zeros directly into the file stream (`stream.WriteByte(0)`).
+   - Tiny header (1 byte): Writes `0x02` (sets code size to 0).
+   - Fat header (>= 4 bytes): Preserves first 4 bytes (flags, max stack), zeroes the rest.
+   - Preserves alias safety: Counts method body usages; zeroes only when all owners are selected.
+   - Does NOT shrink file size on disk; benefits come from package compression (.ipa/.apk/brotli)
+     and anti-decompilation protection.
+
+3.3 Tool Taxonomy Summary
+- `ILLink`: Full trimmer in `dotnet/runtime/src/tools/illink`. Performs whole-program
+  reachability analysis and dead code sweep. Built on Mono.Cecil.
+- `ILStrip`: Post-AOT bytecode stripping tool in `dotnet/runtime/src/tasks`. No reachability
+  analysis. Either replaces all bodies with `ret` via Cecil (`AssemblyStripper`) or
+  zeroes specific pre-computed method byte ranges via SRM (`TrimMethods`).
+- `ILTrim` (`ILTrim.Core`): Experimental prototype in `dotnet/runtime/src/coreclr/tools/ILTrim.Core`.
+  Performs whole-program trimming using the NativeAOT type system + SRM emission (no Cecil).
+
+
+4. WORKLOAD SPECTRUM & AVAILABLE WORKLOAD ASSETS
+------------------------------------------------
+To ensure the thesis covers more than just pass-through stripping, four workload tiers
+are defined and mapped to immediately available assets:
+
+| Tier | Transformation Style | Real-World Analog | Workspace Asset | Status |
+|---|---|---|---|---|
+| **Tier 1: Pass-Through** | Whole & selective bytecode stripping | Post-AOT ILStrip | `referent/ilstrip-compatibility` (67 assemblies) | Ready to run |
+| **Tier 2: Metadata-Only** | Attribute / member stripping | Feature switches, Obsolete cleanup | `inputs/058/System.Text.Json.dll` (strip `[Obsolete]` / `[Nullable]`) | 20 lines C# |
+| **Tier 3: IL Generative** | Instruction decoding, injection, editing | Android `MarshalMethods`, MAUI XamlC | `Analysis/CecilCalculatorDemo` (IL injection, operand rewrite) | Ready to run |
+| **Tier 4: Deep Sweep** | Whole-program reachability & mark/sweep | ILLink | `learning-exploring/TrimDemo/linker.rsp` (`illink.dll @linker.rsp`) | Ready to run |
+
+
+5. THE BENCHMARK & VERIFICATION HARNESS ARCHITECTURE
+-----------------------------------------------------
+The benchmarking strategy integrates performance measurement with automated correctness:
+
+```
+[Corpus: 67 Assemblies in manifest.json]
+                 │
+                 ├──► Engine A: Legacy Cecil (AssemblyStripper.dll)
+                 │         ├── Measure: Wall Time, Memory Allocation, GC Gen0/1/2
+                 │         └── Emits: Cecil Candidate DLLs
+                 │
+                 ├──► Engine B: New SRM Library
+                 │         ├── Measure: Wall Time, Memory Allocation, GC Gen0/1/2
+                 │         └── Emits: SRM Candidate DLLs
+                 │
+                 ▼
+[Automated Verification Layer: StripReplay / BinaryInspection]
+  ├── Normalized SHA-256 match against deterministicExpected
+  ├── Heaps match: #Strings, #Blob, #GUID, #US
+  ├── Table count preservation
+  ├── Method stub verification (RVA -> shared ret, NoInlining)
+  └── MVID & EntryPoint preservation
+                 │
+                 ▼
+[Output: Comprehensive Comparative Thesis Report Table]
+```
+
+Metrics captured per assembly and in aggregate:
+1. Mean Execution Time (ms) and relative Speedup ($T_{\text{Cecil}} / T_{\text{SRM}}$).
+2. Managed Allocations (Bytes/MB) via `[MemoryDiagnoser]` and Reduction percentage.
+3. Garbage Collection Collections (Gen 0, Gen 1, Gen 2).
+4. Correctness Verdict: Automated PASS / FAIL.
+
+
+6. ARCHITECTURAL BLUEPRINT FOR THE SRM REWRITE LIBRARY
+------------------------------------------------------
+The initial implementation will target whole-assembly stripping to establish the core:
+
+1. `PEReader` & `MetadataReader`:
+   Open input assembly in memory; inspect headers, table row counts, and heaps.
+2. Pass-Through Heap Preservation:
+   Stream `#Strings`, `#Blob`, `#GUID`, and `#US` raw memory blocks directly into the
+   output builders without string/blob decoding.
+3. Metadata Table Reproduction via `MetadataBuilder`:
+   - Copy non-method tables row-by-row.
+   - For `MethodDef`: Set `ImplAttributes |= NoInlining`. Assign bodyless methods RVA 0.
+     Assign all body-bearing methods the offset of the single shared stub.
+   - Fix `CustomAttribute`: Ensure correct sorting by `HasCustomAttribute` parent,
+     properly handling tags 20 (`GenericParamConstraint`) and 21 (`MethodSpec`).
+4. Method Body Stream:
+   Emit a single 2-byte body block: Tiny header `0x06` + Opcode `0x2A` (`ret`).
+   Every stripped method references this single shared offset.
+5. PE Packaging via `ManagedPEBuilder`:
+   Assemble PE headers, CLI header, metadata root, method body stream, and resources.
+   Preserve entry point token and original MVID.
+
+
+7. IMMEDIATE NEXT ACTIONS
+-------------------------
+1. Run the existing `StripReplay.dll exercise` command across `corpus/manifest.json`
+   to confirm baseline verification of the legacy oracle on the current machine.
+2. Build a BenchmarkDotNet harness that runs legacy `AssemblyStripper.dll` across the 67
+   corpus assemblies, capturing the baseline performance/memory/GC table.
+3. Begin implementing the core SRM copy-through rewriting library for whole-assembly stripping.
+4. Validate the SRM implementation using `StripReplay.dll verify-whole`.
+5. Run the comparative benchmark to generate the definitive thesis results table.
+
+End of handoff.

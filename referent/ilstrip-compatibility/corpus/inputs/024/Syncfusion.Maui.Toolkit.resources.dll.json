@@ -1,0 +1,114 @@
+{
+  "sha256": "0056406334a6f56161b65c13bcbce14c95e5f27f00cd672d8d556e76273f82d2",
+  "normalizedSha256": "5c18fd23ef2c8b438f8e2f055b2cf15069b0e0ba21501cf77c008220e9907209",
+  "length": 5632,
+  "mvid": "558c9847-e141-475c-a76f-a093a6f4e132",
+  "machine": "I386",
+  "entryPoint": 0,
+  "corFlags": 1,
+  "strongNameSignatureSize": 0,
+  "strongNameSignatureAllZero": true,
+  "tableRows": {
+    "Module": 1,
+    "TypeRef": 11,
+    "TypeDef": 1,
+    "FieldPtr": 0,
+    "Field": 0,
+    "MethodPtr": 0,
+    "MethodDef": 0,
+    "ParamPtr": 0,
+    "Param": 0,
+    "InterfaceImpl": 0,
+    "MemberRef": 10,
+    "Constant": 0,
+    "CustomAttribute": 10,
+    "FieldMarshal": 0,
+    "DeclSecurity": 0,
+    "ClassLayout": 0,
+    "FieldLayout": 0,
+    "StandAloneSig": 0,
+    "EventMap": 0,
+    "EventPtr": 0,
+    "Event": 0,
+    "PropertyMap": 0,
+    "PropertyPtr": 0,
+    "Property": 0,
+    "MethodSemantics": 0,
+    "MethodImpl": 0,
+    "ModuleRef": 0,
+    "TypeSpec": 0,
+    "ImplMap": 0,
+    "FieldRva": 0,
+    "EncLog": 0,
+    "EncMap": 0,
+    "Assembly": 1,
+    "AssemblyProcessor": 0,
+    "AssemblyOS": 0,
+    "AssemblyRef": 1,
+    "AssemblyRefProcessor": 0,
+    "AssemblyRefOS": 0,
+    "File": 0,
+    "ExportedType": 0,
+    "ManifestResource": 3,
+    "NestedClass": 0,
+    "GenericParam": 0,
+    "MethodSpec": 0,
+    "GenericParamConstraint": 0,
+    "Document": 0,
+    "MethodDebugInformation": 0,
+    "LocalScope": 0,
+    "LocalVariable": 0,
+    "LocalConstant": 0,
+    "ImportScope": 0,
+    "StateMachineMethod": 0,
+    "CustomDebugInformation": 0
+  },
+  "methods": [],
+  "resources": [
+    {
+      "name": "Syncfusion.Maui.Toolkit.Calendar.Resources.SfCalendar.en-US.resources",
+      "attributes": 1,
+      "implementationToken": 637534208,
+      "length": 600,
+      "sha256": "a795a043ee93bda25f8bd16bbeae88ce8cf353d9dec7b9c167b798af987bbb5f"
+    },
+    {
+      "name": "Syncfusion.Maui.Toolkit.NumericEntry.Resources.SfNumericEntry.en-US.resources",
+      "attributes": 1,
+      "implementationToken": 637534208,
+      "length": 348,
+      "sha256": "a0b6ca0b430b61c4f80767dba74f4c9024d4d2217ed3744083941ceb9ed8ea4c"
+    },
+    {
+      "name": "Syncfusion.Maui.Toolkit.SegmentedControl.Resources.SfSegmentedControl.en-US.resources",
+      "attributes": 1,
+      "implementationToken": 637534208,
+      "length": 258,
+      "sha256": "86fa11c1dfad6649fc99cb1b5603e16fbd32a18c3b0852cf5be11fe28684e117"
+    }
+  ],
+  "debugDirectory": [
+    {
+      "type": "Reproducible",
+      "stamp": 0,
+      "majorVersion": 0,
+      "minorVersion": 0,
+      "isPortableCodeView": false,
+      "guid": null,
+      "age": null,
+      "path": null
+    }
+  ],
+  "normalizationRanges": [
+    {
+      "offset": 136,
+      "length": 4,
+      "reason": "COFF TimeDateStamp"
+    },
+    {
+      "offset": 3260,
+      "length": 4,
+      "reason": "Debug[0].TimeDateStamp (legacy Reproducible entry)"
+    }
+  ]
+}

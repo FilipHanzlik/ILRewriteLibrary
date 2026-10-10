@@ -1,0 +1,46 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>CommunityToolkit.Maui.Core</id>
+    <version>12.3.0</version>
+    <title>CommunityToolkit.Maui.Core</title>
+    <authors>Microsoft</authors>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <license type="expression">MIT</license>
+    <licenseUrl>https://licenses.nuget.org/MIT</licenseUrl>
+    <icon>icon.png</icon>
+    <projectUrl>https://github.com/CommunityToolkit/Maui</projectUrl>
+    <description>Core library for community toolkits using .NET MAUI</description>
+    <releaseNotes>See https://github.com/CommunityToolkit/Maui/releases</releaseNotes>
+    <copyright>© Microsoft Corporation. All rights reserved.</copyright>
+    <tags>dotnet,maui,toolkit,kit,communitytoolkit,dotnetcommunitytoolkit</tags>
+    <repository type="git" url="https://github.com/CommunityToolkit/Maui" commit="035d9c96e251aa36a9153505d5dd33e0ce08110b" />
+    <dependencies>
+      <group targetFramework="net9.0">
+        <dependency id="Microsoft.Maui.Core" version="9.0.120" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Maui.Essentials" version="9.0.120" exclude="Build,Analyzers" />
+      </group>
+      <group targetFramework="net9.0-android35.0">
+        <dependency id="Microsoft.Maui.Core" version="9.0.120" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Maui.Essentials" version="9.0.120" exclude="Build,Analyzers" />
+      </group>
+      <group targetFramework="net9.0-ios18.0">
+        <dependency id="Microsoft.Maui.Core" version="9.0.120" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Maui.Essentials" version="9.0.120" exclude="Build,Analyzers" />
+      </group>
+      <group targetFramework="net9.0-maccatalyst18.0">
+        <dependency id="Microsoft.Maui.Core" version="9.0.120" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Maui.Essentials" version="9.0.120" exclude="Build,Analyzers" />
+      </group>
+      <group targetFramework="net9.0-tizen10.0">
+        <dependency id="Microsoft.Maui.Core" version="9.0.120" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Maui.Essentials" version="9.0.120" exclude="Build,Analyzers" />
+      </group>
+      <group targetFramework="net9.0-windows10.0.19041">
+        <dependency id="Microsoft.Maui.Core" version="9.0.120" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Maui.Essentials" version="9.0.120" exclude="Build,Analyzers" />
+        <dependency id="System.Speech" version="9.0.5" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>

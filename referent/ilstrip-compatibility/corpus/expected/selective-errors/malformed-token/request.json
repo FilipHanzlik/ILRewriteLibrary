@@ -1,0 +1,14 @@
+{
+  "name": "malformed-token",
+  "input": "inputs/025/MauiStripSample.dll",
+  "mvid": "a5f5959c-869a-4599-8da3-6a4d2bba83b1",
+  "tokens": [
+    "not-a-hex-token"
+  ],
+  "taskSucceeded": false,
+  "cliExitCode": 1,
+  "exceptionType": "AggregateException(FormatException)",
+  "errors": null,
+  "producesFile": false,
+  "outputSha256": null
+}

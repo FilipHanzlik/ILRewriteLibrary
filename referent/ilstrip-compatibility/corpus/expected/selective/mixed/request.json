@@ -1,0 +1,18 @@
+{
+  "name": "mixed",
+  "input": "inputs/025/MauiStripSample.dll",
+  "tokens": [
+    "0600000e",
+    "06000001",
+    "06000030"
+  ],
+  "mvid": "a5f5959c-869a-4599-8da3-6a4d2bba83b1",
+  "output": "expected/selective/mixed/MauiStripSample.dll",
+  "outputSha256": "f67e9748263b486a818c0fcabccb4aff0fe05d0e8962c112e7dad2252f4a0706",
+  "inputLength": 744448,
+  "outputLength": 744448,
+  "selectedMethodCount": 3,
+  "changedByteCount": 368,
+  "byteIdenticalAcrossRuns": true,
+  "producesFile": true
+}

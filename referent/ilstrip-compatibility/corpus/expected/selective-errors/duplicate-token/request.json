@@ -1,0 +1,17 @@
+{
+  "name": "duplicate-token",
+  "input": "inputs/025/MauiStripSample.dll",
+  "mvid": "a5f5959c-869a-4599-8da3-6a4d2bba83b1",
+  "tokens": [
+    "06000001",
+    "06000001"
+  ],
+  "taskSucceeded": false,
+  "cliExitCode": 1,
+  "exceptionType": null,
+  "errors": [
+    "Method usage count is less than zero for rva: 8264."
+  ],
+  "producesFile": true,
+  "outputSha256": "dc52b5caf03de951728471ba64a33b791f4b943013360a98b64c3cb007b49180"
+}

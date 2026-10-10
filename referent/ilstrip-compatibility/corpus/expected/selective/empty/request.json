@@ -1,0 +1,14 @@
+{
+  "name": "empty",
+  "input": "inputs/025/MauiStripSample.dll",
+  "tokens": [],
+  "mvid": "a5f5959c-869a-4599-8da3-6a4d2bba83b1",
+  "output": null,
+  "outputSha256": "dc52b5caf03de951728471ba64a33b791f4b943013360a98b64c3cb007b49180",
+  "inputLength": 744448,
+  "outputLength": 744448,
+  "selectedMethodCount": 0,
+  "changedByteCount": 0,
+  "byteIdenticalAcrossRuns": true,
+  "producesFile": false
+}

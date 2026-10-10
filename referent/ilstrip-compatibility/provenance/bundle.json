@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "captureDate": "2026-10-09",
+  "wholeFixtureCount": 67,
+  "selectiveSuccessCases": 5,
+  "selectiveFailureCases": 4,
+  "originalManifestSha256": "12235b147a0e80d7d8d31d6a06b1b6ec1aada99be3fbb8fad0fa4ae3806f353d",
+  "textualPathRedaction": true,
+  "frozenBinaryBytesPreserved": true,
+  "oracleBinaries": [
+    {
+      "identity": "MonoTargetsTasks, Version=10.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+      "informationalVersion": "10.0.3+c2435c3e0f46de784341ac3ed62863ce77e117b4",
+      "sha256": "ce66e6d68253fd11501fa5be14739221a3cd552ff7f9ded9d94f75ebb3731d94",
+      "file": "MonoTargetsTasks.dll"
+    },
+    {
+      "identity": "AssemblyStripper, Version=10.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+      "informationalVersion": "10.0.3+c2435c3e0f46de784341ac3ed62863ce77e117b4",
+      "sha256": "ddd6e8da7b7ef60db65fba3e2555ba50c4badfe01a7e3b63a4039c3721415432",
+      "file": "AssemblyStripper.dll"
+    }
+  ]
+}
