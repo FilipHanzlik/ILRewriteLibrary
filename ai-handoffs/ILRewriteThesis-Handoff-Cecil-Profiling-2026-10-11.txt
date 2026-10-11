@@ -1,0 +1,218 @@
+IL REWRITE THESIS - MONO.CECIL EMPIRICAL PROFILING & MOTIVATION (CHAPTER 2)
+Updated: 2026-10-11
+=============================================================================
+
+Purpose and reading order
+-------------------------
+This handoff records the complete empirical benchmarking study conducted on Mono.Cecil
+using JetBrains dotTrace and dotMemory on October 11, 2026.
+It establishes the concrete, quantitative foundation for Chapter 2 of the bachelor's
+thesis: "Motivation: Why Mono.Cecil is Memory-Heavy and Slow".
+
+Reading order within the thesis documentation:
+1. `ILRewriteThesis-Handoff.txt` (Initial proposal & hypothesis)
+2. `ILRewriteThesis-Handoff-Supplement.txt` (Initial corrections, DLL basics)
+3. `ILRewriteThesis-Handoff-Cecil-to-SRM.txt` & `ILRewriteThesis-Handoff-SRM.txt`
+4. `ILRewriteThesis-Handoff-ILLink-Profiling.txt` (PerfView trace analysis, Blazor baseline)
+5. `ILRewriteThesis-Handoff-Cecil-Instrumentation.txt` (Provenance, use-case inventory)
+6. `ILRewriteThesis-Handoff-Cecil-Recorder-2026-09-23.txt` (Cecil recorder & calculator demo)
+7. `il_rewrite_thesis_benchmarking_profiling_strategy.txt` (Pivot to E2E benchmarking)
+8. `ILRewriteThesis-Handoff-ILStrip-Corpus-and-Strategy-2026-10-10.txt` (Corpus audit & strategy)
+9. THIS FILE (`ILRewriteThesis-Handoff-Cecil-Profiling-2026-10-11.txt`).
+
+
+1. EXECUTIVE SUMMARY & BENCHMARK SETUP
+--------------------------------------
+To move beyond anecdotal criticisms of Mono.Cecil, a dedicated standalone profiling runner
+was implemented under `Analysis/CecilProfileRunner` on .NET 10.0 x64 (Release mode) targeting
+`Mono.Cecil 0.11.6` and `Mono.Cecil.Rocks`.
+
+1.1 Target Benchmark Subject
+All three workloads were executed against the same real-world production assembly:
+  Assembly: `Microsoft.Maui.Controls.dll`
+  PE Size:  2,141,480 bytes (2.04 MB)
+  PDB Size: 891,520 bytes (891 KB Portable PDB)
+  Contents: 1,827 Types, 14,860 Methods, 5,899 Fields, 7,901 Custom Attributes
+  Location: `Analysis/CecilProfileRunner/input/Microsoft.Maui.Controls.dll`
+            (Mirrored from corpus input `referent/ilstrip-compatibility/corpus/inputs/015/`)
+
+1.2 The Three Workload Tiers (Real-World Toolchain Modeling)
+- Tier 1 (Easy / Metadata-only): `metadata-scan`
+  Models Android SDK `RemoveRegisterAttribute` and ILLink `LinkAttributesParser`.
+  Eager recursive traversal of all types, members, and custom attributes, completely
+  unpacking constructor arguments and named properties without modifying or saving.
+- Tier 2 (Medium / Macro-rewrite): `assembly-strip`
+  Models `dotnet/runtime`'s `AssemblyStripper.cs` post-AOT IL stripping pipeline.
+  Eagerly reads assembly, iterates 14,182 non-abstract methods, clears instruction bodies,
+  emits a single `OpCodes.Ret`, sets `MethodImplAttributes.NoInlining`, and re-writes the
+  assembly to disk (output size: 1,093,632 bytes, -48.9%).
+- Tier 3 (Hard / Fine-grained IL & Symbol Rewrite): `keepalive-inject`
+  Models Android SDK `AddKeepAlivesHelper` IL post-processing and Portable PDB synchronization.
+  Loads assembly and Portable PDB symbols, analyzes method control flow, identifies reference-type
+  parameters, injects 29,384 instructions (`Ldarg` + `Call GC.KeepAlive`), retargets 1,089 branch
+  operands pointing to return points, and re-encodes both rewritten PE (2.24 MB) and valid
+  Portable PDB (891 KB) to disk.
+
+1.3 Measurement Protocol & Noise Elimination
+Console I/O was completely removed from timed loops to prevent buffer allocations and terminal
+flushes from contaminating CPU samples. Dependency resolution was stabilized via
+`AssemblyResolverHelper.cs` to prevent external resolution crashes on pass-through writes.
+
+
+2. MASTER EMPIRICAL PROFILING DATASET (CHAPTER 2 CORE EVIDENCE)
+---------------------------------------------------------------
+The following consolidated table reflects the exact measurements recorded from JetBrains
+dotTrace (Timeline Mode) and JetBrains dotMemory (Memory Traffic & Generations):
+
+| Profiling Metric               | Tier 1: `metadata-scan` | Tier 2: `assembly-strip` | Tier 3: `keepalive-inject` |
+| :----------------------------- | :---------------------- | :----------------------- | :------------------------- |
+| Input Assembly Size            | 2.04 MB                 | 2.04 MB                  | 2.04 MB (+ 891 KB PDB)     |
+| Output Assembly Size           | N/A (Read-only)         | 1.09 MB (-48.9%)         | 2.24 MB (+ 891 KB PDB)     |
+| Total Wall-Clock Time          | 270 ms                  | 538 ms                   | 1,405 ms                   |
+| Read / Ingestion Phase         | 239 ms (88.5%)          | 246 ms (45.8%)           | 685 ms (48.7%) [314+371ms] |
+| Write / Serialization Phase    | N/A                     | 257 ms (47.8%)           | 618 ms (44.0%)             |
+| Domain Logic Execution Time    | ~5 ms (~1.8%)           | ~7 ms (~1.4%)            | < 40 ms (< 3.0%)           |
+| Stop-the-World GC Pause        | 18 ms (6.8%)            | 44 ms (8.13%)            | 208 ms (14.83%)            |
+| Number of GC Pauses (Timeline) | ~3 collections          | 5 collections            | 16+ collections            |
+| Peak Managed Heap              | 21.34 MB                | ~34 MB                   | ~80 MB                     |
+| Dominant Heap Generation       | Gen 1 (47.2%, 10.08 MB) | Gen 2 (~18 MB, ~53%)     | Gen 2 (~55-60 MB, ~75%)    |
+| Total Allocated Memory Traffic | 20.17 MB                | 33.38 MB                 | 112.94 MB                  |
+| Framework Allocations (Read+Wr)| 19.53 MB (96.8%)        | 28.95 MB (86.8%)         | 105.88 MB (93.7%)          |
+| User Domain Allocations (Own)  | < 0.6 MB (< 3.2%)       | ~3.79 MB (11.3%)         | 2.84 MB (2.5%)             |
+| Allocation Amplification Ratio | 9.9x                    | 16.4x                    | 55.4x                      |
+| Framework Overhead Ratio       | 98.2%                   | 98.6%                    | 97.0%                      |
+
+
+3. WORKLOAD-BY-WORKLOAD TECHNICAL ANALYSIS
+------------------------------------------
+
+3.1 Tier 1: Metadata Scanner (`(easy)_MetadataScanner.md`)
+- dotTrace Timing:
+  Total execution time was 270 ms. `ReadAssembly` consumed 239 ms (88.5%), while the recursive
+  iteration over 1,827 types, 14,860 methods, and unpacking of 7,901 attributes took only ~5 ms (~1.8%).
+- dotMemory Heap Generations:
+  The managed heap peaked at 21.34 MB (Gen 0: 2.44 MB [11.4%], Gen 1: 10.08 MB [47.2%],
+  Gen 2: 2.47 MB [11.6%], LOH: 6.35 MB [29.8%]).
+- Key Observation:
+  Mono.Cecil front-loads execution into materializing the object graph. Over 209,500 objects
+  were allocated (18.24 MB in `ModuleReader.CreateModule`). Surviving objects were immediately
+  promoted into Gen 1, triggering 18 ms of GC freeze on a purely read-only scan of a 2 MB file.
+
+3.2 Tier 2: Macro Assembly Stripper (`(medium)_AssemblyStripper.md`)
+- dotTrace Timing:
+  Total execution time was 538 ms, exhibiting an exact 50/50 split between Reading (246 ms / 45.8%)
+  and Writing (257 ms / 47.8%). The actual mutation (clearing instructions and emitting `ret` across
+  14,182 methods) took only ~7 ms (~1.4%).
+- The Serialization Bottleneck:
+  Writing 1.09 MB took 257 ms (effective throughput: ~4.25 MB/s). Inside `ModuleWriter.Write`:
+  `MetadataBuilder.BuildMetadata` consumed 199 ms (~80% of write time), dominated by `BuildModule`
+  (140 ms, re-synthesizing metadata tables from objects) and `WriteStrings` (31 ms, re-interning
+  and re-hashing strings into `#Strings`).
+- Memory Traffic:
+  Generated 33.38 MB total traffic (Read: 18.18 MB, Write: 10.77 MB, Loop: 3.79 MB).
+  Peak heap reached ~34 MB across two distinct allocation waves, with 5 GC pauses totaling 44 ms (8.13%).
+
+3.3 Tier 3: KeepAlive Injection & Portable PDB (`(hard)_KeepAlives.md`)
+- dotTrace Timing:
+  Total runtime expanded to 1,405 ms. GC wait exploded to 208 ms (14.83% of total time).
+  Reading was split into upfront PE read (`314 ms`) and on-demand body/symbol read (`371 ms`
+  in `ModuleDefinition.Read`). Writing took 618 ms (44.0%) due to re-encoding Portable PDB sequence points.
+- dotMemory Heap Generations:
+  Peak managed heap reached ~80 MB ($39.2\times$ input file size). Generation 2 completely dominated
+  the timeline (~55-60 MB, "Sea of Green"). More than 16 separate GC pause events occurred.
+- Memory Traffic:
+  Generated 112.94 MB of total allocations ($55.4\times$ amplification).
+  Write allocated 45.62 MB, upfront Read allocated 32.97 MB, on-demand body read allocated 27.29 MB.
+  Our actual injection code allocated only 2.84 MB (2.5%). Over 93.7% was pure Cecil overhead.
+
+
+4. CORE ARCHITECTURAL LESSONS FOR CHAPTER 2
+-------------------------------------------
+
+Lesson 1: The Object-Per-Entity Inflation Dilemma
+Mono.Cecil represents every metadata row, IL instruction, parameter, and sequence point as an
+independent garbage-collected class instance (`Instruction`, `MethodDefinition`, `CustomAttribute`).
+For a 2 MB assembly with 14,860 methods, this allocates 112.94 MB of managed heap objects ($55.4\times$).
+In compiler pipelines, this causes massive GC pressure and poor cache locality.
+
+Lesson 2: Generational Staircase Promotion & GC Thrashing
+Because the assembly tree must remain live in memory while iterating types and methods, objects
+survive Gen 0 and Gen 1 collections and are promoted into Generation 2.
+In Workload 3, Gen 2 comprised >70% of the live heap. Collecting Gen 2 requires expensive Full GCs,
+causing the runtime to lose 208 ms (14.8% of total execution) to thread freezes.
+
+Lesson 3: Symmetrical Serialization Penalty (`BuildMetadata`)
+Cecil completely decouples its in-memory graph from the physical PE layout. When writing, it
+cannot perform incremental updates or stream-copy untouched metadata tables.
+It must re-synthesize all metadata rows (`BuildModule`), re-intern strings (`WriteStrings`),
+and recalculate PDB sequence points, capping serialization throughput at ~4-5 MB/s.
+
+Lesson 4: Deferred Deserialization Reality
+Specifying `ReadingMode.Immediate` does not eagerly deserialize IL bodies or debug symbols.
+Cecil defers these until `method.Body` is touched, resulting in hidden 371 ms latency spikes
+during processing loops.
+
+Lesson 5: The Dependency Resolution Trap
+Cecil's metadata writer tightly couples constant serialization to external type resolution.
+Writing an assembly containing enum-typed default parameters invokes `TypeReference.Resolve()`.
+If the referenced assembly is missing from the resolver, `Write()` throws an `AssemblyResolutionException`,
+even if the method and parameter were completely unmodified.
+
+Lesson 6: Contrast with Modern System.Reflection.Metadata (SRM) Architecture
+The empirical findings cleanly motivate the architectural shift to `System.Reflection.Metadata`:
+1. Struct Handles vs. Class Instances: SRM uses lightweight 32-bit value-type handles
+   (`TypeDefinitionHandle`, `BlobReader`) directly over memory-mapped spans, eliminating
+   the 112 MB allocation traffic and Gen 2 promotion.
+2. Raw Span IL Inspection: IL bytes are viewed as `ReadOnlySpan<byte>` without instantiating
+   individual `Instruction` objects.
+3. Pass-Through Table & Heap Cloning: Unchanged streams (`#Strings`, `#Blob`, `#US`, unmodified tables)
+   can be directly block-copied into the output builder without deserialization or re-interning.
+
+
+5. COMPLETE INVENTORY OF REPOSITORY ASSETS & ARTIFACTS
+------------------------------------------------------
+
+5.1 Profiling Reports & Screenshot Artifacts (`Analysis/CecilProfileRunner/Results/`)
+- Tier 1:
+  - `(easy)_MetadataScanner.md`
+  - `(easy)_MetadataScanner_trace.png` (dotTrace call tree)
+  - `(easy)_MetadataScanner_memory_timeline.png` (dotMemory heap timeline)
+  - `(easy)_MetadataScanner_memory_calltree.png` (dotMemory allocation call tree)
+- Tier 2:
+  - `(medium)_AssemblyStripper.md`
+  - `(medium)_AssemblyStripper_trace.png`
+  - `(medium)_AssemblyStripper_memory_timeline.png`
+  - `(medium)_AssemblyStripper_memory_calltree.png`
+- Tier 3:
+  - `(hard)_KeepAlives.md`
+  - `(hard)_KeepAlives_trace.png`
+  - `(hard)_KeepAlives_memory_timeline.png`
+  - `(hard)_KeepAlives_memory_calltree.png`
+
+5.2 Runner Source Files (`Analysis/CecilProfileRunner/`)
+- `CecilProfileRunner.csproj`: Targets `net10.0`, references `Mono.Cecil 0.11.6` & `Mono.Cecil.Rocks`.
+- `Program.cs`: Clean CLI runner supporting `-w <workload>`, `-i <input>`, `-o <out>`.
+- `AssemblyResolverHelper.cs`: Multi-tier fallback resolver scanning input, base, and corpus folders.
+- `MetadataScanWorkload.cs`: Eager metadata & custom attribute inspection.
+- `AssemblyStripWorkload.cs`: Method body clearing, ret emission, PE rewrite.
+- `KeepAlivesWorkload.cs`: Control-flow branch retargeting, instruction injection, PDB sync.
+- `HANDOFF.md`: Markdown version of the handoff summary.
+
+5.3 Input / Output Assemblies
+- Input:  `input/Microsoft.Maui.Controls.dll` (2,141,480 bytes) & `.pdb` (891,520 bytes).
+- Output: `output/Microsoft.Maui.Controls_stripped.dll` (1,093,632 bytes, -48.9%).
+- Output: `output/Microsoft.Maui.Controls_keepalives.dll` (2,244,608 bytes) & `.pdb` (891,520 bytes).
+
+
+6. NEXT STEPS & THESIS PROGRESSION
+----------------------------------
+1. Chapter 2 Writing:
+   Directly copy Section 2 (Master Empirical Table) and Section 4 (Architectural Lessons)
+   into the LaTeX thesis document under Chapter 2 ("Motivation").
+2. Reference Profiler Figures:
+   Embed the 9 companion PNG screenshots from `Results/` as figures in Chapter 2 to visually
+   illustrate the 50/50 read-write symmetry, the Gen 2 "Sea of Green", and the 208 ms GC freeze.
+3. Transition to Chapter 3 (SRM Engine Implementation):
+   Begin the implementation of the zero-allocation SRM copy-through engine for ILStrip
+   against the 67-assembly corpus (`referent/ilstrip-compatibility`), comparing its runtime
+   and memory directly against the Cecil baselines established here.
