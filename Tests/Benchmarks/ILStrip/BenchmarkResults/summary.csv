@@ -1,0 +1,2 @@
+Assembly,SizeBytes,BaselineMeanNs,BaselineStdDevNs,BaselineStdErrNs,CandidateMeanNs,CandidateStdDevNs,CandidateStdErrNs,SpeedupRatio,TimeReductionPercent,BaselineAllocBytes,CandidateAllocBytes,MemoryReductionPercent
+System.Threading.Thread.dll,4608,37690033.33,63235666.90,36509129.31,39183546.67,65910119.43,38053225.20,0.96,-3.96,71824,71824,0.00

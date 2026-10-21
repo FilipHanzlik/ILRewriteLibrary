@@ -16,4 +16,9 @@
     <Reference Include="Microsoft.NET.StringTools" HintPath="$(MSBuildBinPath)/Microsoft.NET.StringTools.dll" />
     <Reference Include="System.Configuration.ConfigurationManager" HintPath="$(MSBuildBinPath)/System.Configuration.ConfigurationManager.dll" />
   </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>ValidationTests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>
