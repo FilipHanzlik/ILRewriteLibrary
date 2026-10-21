@@ -1,0 +1,252 @@
+IL REWRITE THESIS - MASTER HANDOFF: ILSTRIP DEVELOPMENT & BENCHMARKING
+Updated: 2026-10-21
+=======================================================================
+
+NOTICE FOR AGENTS & DEVELOPERS:
+-------------------------------
+THIS IS THE CONSOLIDATED, UP-TO-DATE MASTER HANDOFF.
+It supersedes all prior exploratory handoffs (1 through 9) for active development.
+All historical tangents, obsolete plans (e.g. forking Cecil with internal counters,
+modifying ILLink source directly, manual PerfView Blazor tracing), and cleaned-up
+scratchpads have been pruned.
+
+Read THIS FILE to get 100% of the active context, empirical baselines, invariant rules,
+validation suites, benchmarking tools, and the concrete architecture for developing
+the new `System.Reflection.Metadata` (SRM) based ILStrip engine.
+
+
+TABLE OF CONTENTS
+-----------------
+1. Mission, Strategic Architecture & Development Roadmap
+2. Empirical Motivation & Cecil Bottlenecks (Chapter 2 Thesis Baseline)
+3. Target Workload: Whole-Assembly Stripping (ILStrip Semantics)
+4. Production Corpus & Golden Invariants (The 67-Assembly Corpus)
+5. Automated Validation & Unit Testing Suite (`Tests/ValidationTests`)
+6. Performance & Memory Benchmarking Suite (`Tests/Benchmarks`)
+7. Architectural Blueprint for the Candidate SRM Stripper
+8. Repository Map & Key Assets
+
+
+=======================================================================
+1. MISSION, STRATEGIC ARCHITECTURE & DEVELOPMENT ROADMAP
+=======================================================================
+Project: Bachelor's Thesis (MFF UK) — High-Performance .NET IL & Metadata Rewriting.
+Primary Goal: Replace the heavy, slow `Mono.Cecil` object model with an efficient,
+low-allocation engine built on `System.Reflection.Metadata` (SRM).
+
+Strategic Path Adopted: "ILStrip-First Iterative Foundation"
+Rather than attempting to build a generic mutable object model upfront, development
+is focused on whole-assembly post-AOT IL stripping (**ILStrip**):
+1. Immediate Production Demand: IL stripping is an official build step in mobile
+   and NativeAOT workloads (`dotnet/runtime`'s `AssemblyStripper.cs` / .NET iOS
+   `MobileILStrip`). The referent provided a complete, frozen 67-assembly corpus.
+2. High Architectural Reuse (70-80%): Writing a compliant ILStrip requires mastering
+   the hardest parts of PE and metadata manipulation with SRM:
+   - Reading PE headers and sections via `PEReader`.
+   - Streaming/pass-through preservation of heaps (`#Strings`, `#Blob`, `#GUID`, `#US`).
+   - Copying and modifying metadata tables (e.g., `MethodDef` row mutation).
+   - Constructing and serializing a valid PE image via `ManagedPEBuilder` / custom layout.
+3. Once ILStrip achieves correctness and demonstrated speedup on all 67 production
+   assemblies, the core PE/metadata container will be extended to handle finer-grained
+   mutations (member removal, instruction injection, PDB synchronization).
+
+
+=======================================================================
+2. EMPIRICAL MOTIVATION & CECIL BOTTLENECKS (CHAPTER 2 THESIS BASELINE)
+=======================================================================
+To prove why Mono.Cecil is slow and memory-heavy, empirical profiling was executed
+on .NET 10.0 x64 (Release mode) against a production framework assembly:
+`Microsoft.Maui.Controls.dll` (2.04 MB PE, 891 KB Portable PDB, 1,827 Types, 14,860 Methods).
+
+Master Profiling Results across 3 Toolchain Tiers (dotTrace & dotMemory):
+| Metric                         | Tier 1: Metadata Scan | Tier 2: Assembly Strip | Tier 3: KeepAlive+PDB  |
+| :----------------------------- | :-------------------- | :--------------------- | :--------------------- |
+| Total Wall-Clock Time          | 270 ms                | 538 ms                 | 1,405 ms               |
+| Ingestion / Read Time          | 239 ms (88.5%)        | 246 ms (45.8%)         | 685 ms (48.7%)         |
+| Serialization / Write Time     | N/A                   | 257 ms (47.8%)         | 618 ms (44.0%)         |
+| User Domain Logic Time         | ~5 ms (~1.8%)         | ~7 ms (~1.4%)          | < 40 ms (< 3.0%)       |
+| Stop-the-World GC Pause        | 18 ms (6.8%)          | 44 ms (8.13%)          | 208 ms (14.83%)        |
+| Peak Managed Heap              | 21.34 MB              | ~34 MB                 | ~80 MB                 |
+| Dominant Generation            | Gen 1 (10.08 MB)      | Gen 2 (~18 MB)         | Gen 2 (~55-60 MB)      |
+| Total Allocated Traffic        | 20.17 MB              | 33.38 MB               | 112.94 MB              |
+| Allocation Amplification Ratio | 9.9x                  | 16.4x                  | 55.4x                  |
+| Framework Overhead %           | 98.2%                 | 98.6%                  | 97.0%                  |
+
+Key Architectural Insights for SRM Design:
+1. Object-Per-Entity Churn: Cecil instantiates class instances for every row, instruction,
+   and parameter. 14,860 methods allocated 112.94 MB of managed heap (55.4x input size).
+2. Generational Promotion ("Sea of Green"): Long-lived object graphs survive minor GCs
+   and get pushed into Generation 2. In Tier 3, 16+ collections occurred, losing 208 ms
+   (nearly 15% of runtime) to stop-the-world freezes.
+3. Symmetrical Serialization Penalty: Writing is not incremental. Cecil decouples objects
+   from physical bytes; writing requires walking the entire object graph to re-synthesize
+   tables (`BuildModule`, 140 ms) and re-intern strings (`WriteStrings`, 31 ms).
+   Writing throughput is capped at ~4.25 MB/s.
+4. Dependency Coupling on Write: Cecil resolves external assemblies (via `AssemblyResolver`)
+   even during pass-through writes of unchanged enum default constants. SRM avoids this.
+
+
+=======================================================================
+3. TARGET WORKLOAD: WHOLE-ASSEMBLY STRIPPING (ILSTRIP SEMANTICS)
+=======================================================================
+In mobile / NativeAOT deployments (.NET iOS/Android), native binaries contain precompiled
+machine code. The managed IL is no longer executed, but metadata (types, members, signatures,
+attributes) must remain intact for reflection and interop.
+
+ILStrip Transformation Rules:
+1. Method Bodies: Clear all IL instructions from every non-abstract, non-runtime method.
+2. Single Shared RVA: All stripped methods with bodies must point to a SINGLE shared RVA
+   in the PE containing a 1-byte opcode: `0x2a` (`ret`).
+3. Bodyless Methods: Abstract methods, runtime-implemented methods, and P/Invoke declarations
+   have no IL body (`RVA == 0`). These must remain untouched with `RVA == 0`.
+4. NoInlining: Bitwise-OR `MethodImplAttributes.NoInlining` (`0x0008`) into `MethodDef.ImplAttributes`.
+5. Exception Handlers & Locals: Removed entirely.
+6. Module MVID: The module GUID (`MVID`) must remain 100% byte-identical to the input.
+7. Entry Point: Entry point token / RVA must be preserved.
+8. Manifest Resources: All managed resources must be preserved byte-for-byte.
+9. Custom Attributes: The `CustomAttribute` table must remain strictly sorted by parent token.
+10. Debug Directory & PDBs:
+    - NO `.pdb` file on disk is modified or created by ILStrip.
+    - Sibling PDBs are compile-time provenance only.
+    - The PE container's CodeView debug directory entry (GUID, age, PDB path) must be preserved.
+
+
+=======================================================================
+4. PRODUCTION CORPUS & GOLDEN INVARIANTS (THE 67-ASSEMBLY CORPUS)
+=======================================================================
+The test corpus was captured directly from a real .NET 10 MAUI iOS Release build
+(`net10.0-ios`, `iossimulator-arm64`).
+
+Corpus Location: `Tests/data/dlls/ILStrip/`
+- `input/`: 67 real production input assemblies totaling 11,674,272 bytes.
+  Spans all sizes and complexities:
+  - Small: `System.Threading.Thread.dll` (4.5 KB)
+  - Medium: `System.Text.Json.dll` (352 KB)
+  - Application: `MauiStripSample.dll` (744 KB, 1,166 methods, fat headers, EH blocks)
+  - Framework: `Syncfusion.Maui.Toolkit.dll` (1.08 MB)
+  - Large Framework: `Microsoft.Maui.Controls.dll` (2.04 MB, 14,860 methods)
+  - CoreLib: `System.Private.CoreLib.dll` (1.89 MB)
+- `expected/`: Exact stripped outputs produced by the referent iOS `MobileILStrip` oracle
+  (totaling 7,436,288 bytes; a 36% physical file size reduction).
+- `mapping.json`: Master schema indexing all 67 assemblies, lengths, MVIDs, and hashes.
+
+Validation Layers:
+- Layer 1: Normalized SHA-256 Match
+  Mono.Cecil stamps wall-clock `DateTime.UtcNow` into the output PE. The validator normalizes
+  the 8 timestamp bytes (4 bytes at COFF header start + 4, 4 bytes in PE Debug directory)
+  to zero, and computes an exact SHA-256 match against `expectedSha256`.
+- Layer 2: Deep Semantic & Structural Rules
+  Uses `System.Reflection.Metadata` (`PEReader`) to verify MVID equality, entrypoint preservation,
+  heaps identity, table row counts, single-ret RVA sharing, and `NoInlining` bit setting.
+
+
+=======================================================================
+5. AUTOMATED VALIDATION & UNIT TESTING SUITE (`Tests/ValidationTests`)
+=======================================================================
+The test project `Tests/ValidationTests/ValidationTests/ValidationTests.csproj` is an xUnit
+test suite connected directly to the referent validator (`StripReplay.dll`).
+
+5.1 Pointing the Test Suite to Your Candidate Stripper
+Set the path to your new ILStrip executable or DLL using either:
+- Method A (Environment Variable):
+  `export NEW_ILSTRIP_PATH="/path/to/MyILStrip.dll"`
+  (Optional CLI template: `export ILSTRIP_ARGS="-i {input} -o {output}"`)
+- Method B (Config File):
+  Write the path to `Tests/ValidationTests/ValidationTests/ilstrip.config.txt`.
+*(If neither is set, tests fall back to the referent legacy oracle as a green baseline).*
+
+5.2 Running the Validation Tests
+From repository root:
+- Run all 67 assemblies individually:
+  `dotnet test Tests/ValidationTests/ValidationTests.sln --filter "FullyQualifiedName~StripAndValidate_IndividualAssembly"`
+- Run on a single assembly (fast debugging):
+  `dotnet test Tests/ValidationTests/ValidationTests.sln --filter "DisplayName~MauiStripSample.dll"`
+  `dotnet test Tests/ValidationTests/ValidationTests.sln --filter "DisplayName~Microsoft.Maui.Controls.dll"`
+- Run official referent whole-corpus certification:
+  `dotnet test Tests/ValidationTests/ValidationTests.sln --filter "FullyQualifiedName~ValidateEntireCorpus_UsingReferentVerifyWholeCli"`
+- Run direct golden check:
+  `dotnet test Tests/ValidationTests/ValidationTests.sln --filter "FullyQualifiedName~VerifyReferentExpectedGoldenOutputsDirectly"`
+
+
+=======================================================================
+6. PERFORMANCE & MEMORY BENCHMARKING SUITE (`Tests/Benchmarks`)
+=======================================================================
+The benchmark project is located at `Tests/Benchmarks/ILStrip/ILStrip/ILStrip.csproj`.
+It uses **BenchmarkDotNet** with `[MemoryDiagnoser]` to measure wall-clock speedup and
+byte-level managed heap allocations.
+
+6.1 Invocation Protocol (`StripperInvoker`)
+The benchmark harness dynamically binds to candidate strippers in-process. Your stripper
+can expose any of the following:
+1. Public static method named `StripAssembly`, `Strip`, `Execute`, or `Run` taking `(string input, string output)`.
+2. Any public static method taking `(string input, string output)` returning `void` or `bool`.
+3. Standard CLI `Main(string[] args)`.
+
+6.2 Benchmark Commands
+- Fast Tiered Iteration (~15-20s, 5 representative tiers):
+  `dotnet run --project Tests/Benchmarks/ILStrip/ILStrip/ILStrip.csproj -c Release -- --candidate <path/to/MyILStrip.dll> --sample --quick`
+- Single Assembly Benchmark (~5s):
+  `dotnet run --project Tests/Benchmarks/ILStrip/ILStrip/ILStrip.csproj -c Release -- --candidate <path/to/MyILStrip.dll> --assembly MauiStripSample.dll --quick`
+- Full Corpus Benchmark (All 67 assemblies, statistical confidence for thesis):
+  `dotnet run --project Tests/Benchmarks/ILStrip/ILStrip/ILStrip.csproj -c Release -- --candidate <path/to/MyILStrip.dll>`
+
+CRITICAL BENCHMARKING CAUTION:
+- `--quick` (`-q`) runs 3 dry iterations without warmup.
+- Allocated memory (`Base Alloc`, `Cand Alloc`, `Mem Saved`) is 100% deterministic and reliable in `--quick`.
+- Execution time (`Speedup`) in `--quick` is susceptible to cold-start jitter and Turbo Boost.
+- ALWAYS run without `--quick` for official thesis numbers!
+
+
+=======================================================================
+7. ARCHITECTURAL BLUEPRINT FOR THE CANDIDATE SRM STRIPPER
+=======================================================================
+To achieve maximum speed and near-zero allocations, the new stripper should adhere
+to the following architectural principles:
+
+1. Zero-Allocation Input Parsing:
+   - Use `System.Reflection.Metadata.PEReader` over memory-mapped file streams or byte spans.
+   - Access metadata via `reader.GetMetadataReader()`.
+
+2. Raw Pass-Through Heap Copying:
+   - In Mono.Cecil, strings are re-interned and deduplicated into a new dictionary.
+   - In the SRM engine, `#Strings`, `#Blob`, `#GUID`, and `#US` heaps must be copied as
+     raw contiguous byte blocks directly from the input PE to the output PE.
+   - Do NOT decode strings into managed `string` objects!
+
+3. MethodDef Table Mutation:
+   - Copy all non-method tables (`TypeRef`, `TypeDef`, `Field`, `MemberRef`, `CustomAttribute`, etc.)
+     directly without object materialization.
+   - For `MethodDef`:
+     - If `RVA == 0` (abstract/runtime/pinvoke): Preserve existing row as-is.
+     - If `RVA != 0` (has IL body):
+       - Set `RVA` to point to the single shared 1-byte ret instruction (`0x2a`).
+       - Set `ImplAttributes |= MethodImplAttributes.NoInlining` (`0x0008`).
+
+4. Minimal PE Synthesis (`ManagedPEBuilder` or Low-Level Writer):
+   - Emit the tiny method body section containing the single `ret` byte (`0x2a`) and tiny header.
+   - Maintain entrypoint token and preserved MVID.
+   - Preserve managed manifest resources.
+   - Preserve the PE Debug directory CodeView entry pointing to the original PDB.
+
+
+=======================================================================
+8. REPOSITORY MAP & KEY ASSETS
+=======================================================================
+- `Analysis/CecilProfileRunner/`
+  Baseline Mono.Cecil profiling runner, reports, and screenshots:
+  - `Results/(easy)_MetadataScanner.md` (+ 3 PNGs)
+  - `Results/(medium)_AssemblyStripper.md` (+ 3 PNGs)
+  - `Results/(hard)_KeepAlives.md` (+ 3 PNGs)
+- `Tests/data/dlls/ILStrip/`
+  - `input/`: 67 real production assemblies.
+  - `expected/`: 67 referent golden stripped assemblies.
+  - `mapping.json`: Master manifest and hash index.
+- `Tests/ValidationTests/ValidationTests/`
+  xUnit validation suite (`ILStripValidationTests.cs`, `TestConfiguration.cs`).
+- `Tests/Benchmarks/ILStrip/ILStrip/`
+  BenchmarkDotNet suite (`Benchmarks.cs`, `StripperInvoker.cs`, `BenchmarkConfig.cs`).
+- `.agents/skills/`
+  - `ilstrip-validation/SKILL.md`: Detailed test guide.
+  - `ilstrip-benchmarking/SKILL.md`: Detailed benchmarking guide.
+- `referent/ilstrip-compatibility/replay/`
+  Referent oracle binaries and validator (`StripReplay.dll`, `AssemblyStripper.dll`).
