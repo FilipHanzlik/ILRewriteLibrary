@@ -50,6 +50,17 @@ public sealed class StripperInvoker
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Stripper assembly not found at: '{fullPath}'", fullPath);
 
+        string assemblyDir = Path.GetDirectoryName(fullPath)!;
+        AssemblyLoadContext.Default.Resolving += (context, assemblyName) =>
+        {
+            string candidate = Path.Combine(assemblyDir, $"{assemblyName.Name}.dll");
+            if (File.Exists(candidate))
+            {
+                return context.LoadFromAssemblyPath(candidate);
+            }
+            return null;
+        };
+
         // Load assembly using default load context so shared framework types resolve smoothly
         Assembly assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(fullPath);
         string name = displayName ?? Path.GetFileNameWithoutExtension(fullPath);

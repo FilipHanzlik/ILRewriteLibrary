@@ -74,6 +74,7 @@ class Program
             if (!string.IsNullOrEmpty(candidatePath))
             {
                 BenchmarkConfig.CandidateDll = Path.GetFullPath(candidatePath);
+                Environment.SetEnvironmentVariable("ILSTRIP_CANDIDATE_DLL", BenchmarkConfig.CandidateDll);
                 Console.WriteLine($"Candidate DLL : {BenchmarkConfig.CandidateDll}");
             }
             else
