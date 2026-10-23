@@ -1,20 +1,20 @@
 # ILStrip Performance Benchmark Results
 
 - **Baseline (Legacy):** `AssemblyStripper.dll`
-- **Candidate (New):** `SrmIlStrip.dll`
-- **Timestamp:** 2026-10-22 08:35:52 UTC
+- **Candidate (New):** `SrmMetadataBuilderStrip.dll`
+- **Timestamp:** 2026-10-23 08:44:15 UTC
 
 ## Aggregate Key Indicators
 
-- 🚀 **Geometric Mean Speedup:** **3,70x faster**
-- 💾 **Total Memory Allocation Reduction:** **99,6% fewer allocations**
+- 🚀 **Geometric Mean Speedup:** **8,49x faster**
+- 💾 **Total Memory Allocation Reduction:** **84,8% fewer allocations**
 
 ## Detailed Comparison by Assembly
 
 | Assembly | Size | Baseline Time (Mean ± σ) | Candidate Time (Mean ± σ) | Speedup | Baseline Alloc | Candidate Alloc | Memory Saved |
 |:---|---:|---:|---:|---:|---:|---:|---:|
-| `System.Threading.Thread.dll` | 4,5 KB | 1,23 ± 0,05 ms | 911,78 ± 49,85 µs | **1,35x** (26,1%) | 68,6 KB | 69,0 KB | **-0,7%** |
-| `System.Text.Json.dll` | 351,5 KB | 85,28 ± 1,66 ms | 33,46 ± 1,22 ms | **2,55x** (60,8%) | 17,76 MB | 111,2 KB | **99,4%** |
-| `MauiStripSample.dll` | 727,0 KB | 229,05 ± 10,83 ms | 43,13 ± 3,04 ms | **5,31x** (81,2%) | 26,94 MB | 87,4 KB | **99,7%** |
-| `System.Private.CoreLib.dll` | 1,85 MB | 391,68 ± 6,80 ms | 65,03 ± 1,99 ms | **6,02x** (83,4%) | 87,96 MB | 297,0 KB | **99,7%** |
-| `Microsoft.Maui.Controls.dll` | 2,04 MB | 408,08 ± 5,55 ms | 65,14 ± 0,61 ms | **6,26x** (84,0%) | 86,36 MB | 309,6 KB | **99,6%** |
+| `System.Threading.Thread.dll` | 4,5 KB | 634,23 ± 28,25 µs | 531,38 ± 44,79 µs | **1,19x** (16,2%) | 68,6 KB | 144,6 KB | **-110,9%** |
+| `System.Text.Json.dll` | 351,5 KB | 56,80 ± 2,17 ms | 4,16 ± 0,14 ms | **13,65x** (92,7%) | 17,76 MB | 2,61 MB | **85,3%** |
+| `MauiStripSample.dll` | 727,0 KB | 170,40 ± 4,94 ms | 12,82 ± 1,46 ms | **13,29x** (92,5%) | 26,94 MB | 5,23 MB | **80,6%** |
+| `System.Private.CoreLib.dll` | 1,85 MB | 307,75 ± 5,44 ms | 19,16 ± 0,90 ms | **16,06x** (93,8%) | 87,96 MB | 11,94 MB | **86,4%** |
+| `Microsoft.Maui.Controls.dll` | 2,04 MB | 339,29 ± 16,50 ms | 26,78 ± 2,10 ms | **12,67x** (92,1%) | 86,36 MB | 13,42 MB | **84,5%** |

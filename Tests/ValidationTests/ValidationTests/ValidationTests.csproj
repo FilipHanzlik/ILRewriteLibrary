@@ -21,7 +21,8 @@
     <Reference Include="StripReplay">
       <HintPath>$(MSBuildThisFileDirectory)../../../referent/ilstrip-compatibility/replay/bin/Release/net10.0/StripReplay.dll</HintPath>
     </Reference>
-    <ProjectReference Include="..\..\..\proof-of-concept-il-rewrite\SrmRewrite.csproj" />
+    <ProjectReference Include="..\..\..\proof-of-concepts\proof-of-concept-il-rewrite\SrmRewrite.csproj" />
+    <ProjectReference Include="..\..\..\proof-of-concepts\poc2-metadata-builder\SrmMetadataBuilderRewrite.csproj" />
   </ItemGroup>
 
 </Project>

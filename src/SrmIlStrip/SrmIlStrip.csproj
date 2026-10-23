@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\proof-of-concept-il-rewrite\SrmRewrite.csproj" />
+    <ProjectReference Include="..\..\proof-of-concepts\proof-of-concept-il-rewrite\SrmRewrite.csproj" />
   </ItemGroup>
 
 </Project>

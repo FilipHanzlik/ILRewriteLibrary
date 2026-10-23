@@ -1,1 +1,1 @@
-c:\Users\filip\OneDrive\Dokumenty\škola\MFF\Bakalářka\src\SrmIlStrip\bin\Release\net10.0\SrmIlStrip.dll
+C:\Users\filip\Documents\škola\MFF\Bakalářka\src\SrmMetadataBuilderStrip\bin\Release\net10.0\SrmMetadataBuilderStrip.dll
