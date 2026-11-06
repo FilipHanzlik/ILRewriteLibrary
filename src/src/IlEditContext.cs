@@ -1,5 +1,6 @@
-﻿using System.Reflection.PortableExecutable;
-using Sytem.Reflection.Metadata;
+﻿using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Runtime.InteropServices;
 
 namespace src
 {
@@ -11,7 +12,18 @@ namespace src
 
         public IlEditContext(string path)
         {
-            var handle = File.OpenHandle(path);
+        }
+
+        private static void  LoadFile(string path)
+        {
+            var stream = new FileStream(
+               path,
+               FileMode.Open,
+               FileAccess.Read,
+               FileShare.Read);
+
+            var peReader = new PEReader(stream, PEStreamOptions.PrefetchEntireImage);
+            
         }
     }
 }
