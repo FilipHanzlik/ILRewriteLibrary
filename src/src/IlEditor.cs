@@ -4,7 +4,7 @@ using System.Text;
 
 namespace src
 {
-    internal class IlEditor
+    public class IlEditor
     {
     }
 }

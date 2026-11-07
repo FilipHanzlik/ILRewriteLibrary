@@ -1,0 +1,2 @@
+- Mixed assemblies are not supported (They contain raw translated code inside the CIL code block. The MethodDef table has an implicit flag for native methods)
+- Ready 2 Run (R2R) assemblies are stripped of their native code. This code can't be edited not just simply reconstructed

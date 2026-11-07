@@ -12,6 +12,8 @@ namespace src
         private MetadataReader _metadataReader;
         private PEReader _peReader;
 
+        public MethodDefinitionHandle Entrypoint { get { throw new NotImplementedException(); } }
+
         internal IlReader(MetadataDeltaStore delta, PEReader peReader)
         {
 
@@ -33,7 +35,6 @@ namespace src
 
             // CorHeader is present because HasMetadata = true
             if (!headers.CorHeader!.Flags.HasFlag(CorFlags.ILOnly)) throw new InvalidOperationException($"The .dll contains mixed code. IL Rewriter supports only pure CIL assemblies");
-
 
         }
 
